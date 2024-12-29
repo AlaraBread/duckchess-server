@@ -99,7 +99,7 @@ struct ListenMessage {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase")]
+#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 enum ListenResponse {
 	PlayerJoined { id: u64 },
 	Turn,

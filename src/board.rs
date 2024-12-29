@@ -2,7 +2,7 @@ use rocket::serde;
 use serde::Serialize;
 
 #[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase")]
+#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub enum PieceType {
 	King { has_castled: bool },
 	Queen,
@@ -13,7 +13,7 @@ pub enum PieceType {
 }
 
 #[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase")]
+#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub enum FloorType {
 	Light,
 	Dark,
@@ -24,14 +24,14 @@ pub enum FloorType {
 }
 
 #[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase")]
+#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub struct Piece {
 	piece_type: PieceType,
 	owner: u64,
 }
 
 #[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase")]
+#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub struct Tile {
 	floor: FloorType,
 	piece: Option<Piece>,
@@ -44,7 +44,7 @@ impl Tile {
 }
 
 #[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase")]
+#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub struct Game {
 	pub players: Vec<u64>,
 	pub board: [[Tile; 8]; 8],
