@@ -149,7 +149,7 @@ async fn listen(
 
 #[derive(Responder)]
 enum ErrorResponse {
-	#[response(status = 400)]
+	#[response(status = 403)]
 	Forbidden(()),
 	#[response(status = 404)]
 	NotFound(()),
