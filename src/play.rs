@@ -85,7 +85,6 @@ async fn play(
 					Some(Ok(message)) = socket.next() => {
 						match message {
 							ws::Message::Text(text) => {
-								println!("Received Text message: {}", text);
 								let broadcast = match broadcast_manager.get_sender(game_id).await {
 									Some(s) => s,
 									None => continue,
@@ -111,7 +110,6 @@ async fn play(
 			}
 			game_manager.update_listeners(game_id, player_id, -1).await;
 			game_manager.cleanup(game_id, player_id, broadcast_manager);
-			println!("ending play session: {:?}", close_message);
 			let close_frame = ws::frame::CloseFrame {
 				code: ws::frame::CloseCode::Normal,
 				reason: close_message.to_string().into(),

@@ -71,34 +71,27 @@ impl GameManager {
 		listen_manager: Arc<BroadcastManager>,
 	) {
 		task::spawn(async move {
-			println!("cleanup task");
 			let mut games = self.games.lock().await;
 			let game = match games.get_mut(&game_id) {
 				Some(game) => game,
 				None => {
-					println!("game not found before");
 					return;
 				}
 			};
 			let prev_counter = game.cleanup_counter.fetch_add(1, Ordering::Relaxed) + 1;
 			drop(games);
-			println!("before timeout");
 			time::sleep(Duration::from_secs(10)).await;
-			println!("after timeout");
 			let mut games = self.games.lock().await;
 			let game = match games.get_mut(&game_id) {
 				Some(game) => game,
 				None => {
-					println!("game not found after");
 					return;
 				}
 			};
 			let new_counter = game.cleanup_counter.load(Ordering::Relaxed);
 			if new_counter != prev_counter || game.get_listen_count(player_id) > 0 {
-				println!("not cleaning up");
 				return;
 			}
-			println!("cleaning up game #{}", game_id);
 			games.remove(&game_id);
 			listen_manager.remove(game_id).await;
 		});
