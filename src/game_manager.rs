@@ -1,12 +1,8 @@
-use crate::{
-	board::Game,
-	game::{ListenMessage, ListenResponse},
-};
+use crate::{broadcast_manager::BroadcastManager, game::Game};
 use rocket::{
 	fairing::AdHoc,
 	futures::lock::Mutex,
-	tokio::{sync::broadcast::Sender, task, time},
-	State,
+	tokio::{task, time},
 };
 use std::{
 	collections::{HashMap, VecDeque},
@@ -31,14 +27,14 @@ pub struct GameManager {
 }
 
 impl GameManager {
-	pub async fn find_match(&self, player_id: u64) -> u64 {
+	pub async fn find_match(&self, player_id: u64, listen_manager: Arc<BroadcastManager>) -> u64 {
 		let mut waiting_games = self.waiting_games.lock().await;
 		let mut games = self.games.lock().await;
 		// maybe make some better matchmaking at some point
 		match waiting_games.iter().enumerate().find(|(_idx, game_id)| {
 			games
 				.get_mut(&game_id)
-				.map(|game| !game.has_player(player_id) && game.get_total_listeners() > 0)
+				.map(|game| game.get_total_listeners() > 0 && game.get_listen_count(player_id) <= 0)
 				.unwrap_or(false)
 		}) {
 			Some((idx, game_id)) => {
@@ -53,38 +49,58 @@ impl GameManager {
 				game.join(player_id);
 				games.insert(id, game);
 				waiting_games.push_back(id);
+				listen_manager.new_channel(id).await;
 				return id;
 			}
+		}
+	}
+	pub async fn update_listeners(&self, game_id: u64, player_id: u64, change: i32) -> bool {
+		let mut games = self.games.lock().await;
+		let game = games.get_mut(&game_id);
+		if let Some(game) = game {
+			game.update_listeners(player_id, change);
+			true
+		} else {
+			false
 		}
 	}
 	pub fn cleanup(
 		self: Arc<Self>,
 		game_id: u64,
 		player_id: u64,
-		queue: Arc<Sender<ListenMessage>>,
+		listen_manager: Arc<BroadcastManager>,
 	) {
 		task::spawn(async move {
+			println!("cleanup task");
 			let mut games = self.games.lock().await;
 			let game = match games.get_mut(&game_id) {
 				Some(game) => game,
-				None => return,
+				None => {
+					println!("game not found before");
+					return;
+				}
 			};
 			let prev_counter = game.cleanup_counter.fetch_add(1, Ordering::Relaxed) + 1;
-			time::interval(Duration::from_secs(30)).tick().await;
+			drop(games);
+			println!("before timeout");
+			time::sleep(Duration::from_secs(10)).await;
+			println!("after timeout");
 			let mut games = self.games.lock().await;
 			let game = match games.get_mut(&game_id) {
 				Some(game) => game,
-				None => return,
+				None => {
+					println!("game not found after");
+					return;
+				}
 			};
 			let new_counter = game.cleanup_counter.load(Ordering::Relaxed);
 			if new_counter != prev_counter || game.get_listen_count(player_id) > 0 {
+				println!("not cleaning up");
 				return;
 			}
-			let _ = queue.send(ListenMessage {
-				player_id: None,
-				response: ListenResponse::Closed,
-			});
+			println!("cleaning up game #{}", game_id);
 			games.remove(&game_id);
+			listen_manager.remove(game_id).await;
 		});
 	}
 }
