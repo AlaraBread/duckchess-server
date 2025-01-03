@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::atomic::AtomicU64};
 
-use rocket::{serde, tokio::task};
+use rocket::serde;
 use serde::Serialize;
 
 #[derive(Serialize, Clone, Debug)]
@@ -62,9 +62,10 @@ impl Game {
 			return true;
 		}
 	}
-	pub fn update_listeners(&mut self, player_id: u64, change: i32) {
+	pub fn update_listeners(&mut self, player_id: u64, change: i32) -> i32 {
 		let listeners = self.listening_players.entry(player_id).or_insert(0);
 		*listeners += change;
+		*listeners
 	}
 	pub fn get_listen_count(&mut self, player_id: u64) -> i32 {
 		*self.listening_players.entry(player_id).or_insert(0)

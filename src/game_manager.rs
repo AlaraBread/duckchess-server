@@ -27,7 +27,11 @@ pub struct GameManager {
 }
 
 impl GameManager {
-	pub async fn find_match(&self, player_id: u64, listen_manager: Arc<BroadcastManager>) -> u64 {
+	pub async fn find_match(
+		&self,
+		player_id: u64,
+		broadcast_manager: Arc<BroadcastManager>,
+	) -> u64 {
 		let mut waiting_games = self.waiting_games.lock().await;
 		let mut games = self.games.lock().await;
 		// maybe make some better matchmaking at some point
@@ -40,7 +44,10 @@ impl GameManager {
 			Some((idx, game_id)) => {
 				let game_id = *game_id;
 				waiting_games.remove(idx);
-				games.get_mut(&game_id).unwrap().join(player_id);
+				games
+					.get_mut(&game_id)
+					.expect("just found game in waiting_games")
+					.join(player_id);
 				return game_id;
 			}
 			None => {
@@ -49,26 +56,24 @@ impl GameManager {
 				game.join(player_id);
 				games.insert(id, game);
 				waiting_games.push_back(id);
-				listen_manager.new_channel(id).await;
+				broadcast_manager.new_channel(id).await;
 				return id;
 			}
 		}
 	}
-	pub async fn update_listeners(&self, game_id: u64, player_id: u64, change: i32) -> bool {
+	pub async fn update_listeners(&self, game_id: u64, player_id: u64, change: i32) -> i32 {
 		let mut games = self.games.lock().await;
 		let game = games.get_mut(&game_id);
 		if let Some(game) = game {
-			game.update_listeners(player_id, change);
-			true
-		} else {
-			false
+			return game.update_listeners(player_id, change);
 		}
+		return 0;
 	}
 	pub fn cleanup(
 		self: Arc<Self>,
 		game_id: u64,
 		player_id: u64,
-		listen_manager: Arc<BroadcastManager>,
+		broadcast_manager: Arc<BroadcastManager>,
 	) {
 		task::spawn(async move {
 			let mut games = self.games.lock().await;
@@ -93,7 +98,7 @@ impl GameManager {
 				return;
 			}
 			games.remove(&game_id);
-			listen_manager.remove(game_id).await;
+			broadcast_manager.remove(game_id).await;
 		});
 	}
 }

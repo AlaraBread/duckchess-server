@@ -42,7 +42,10 @@ async fn find_match(
 		.get_sender(game_id)
 		.await
 		.expect("just created the game");
-	let _ = broadcast.send(PlayResponse::PlayerJoined { id: player_id });
+	let _ = broadcast.send(PlayResponse::PlayerAdded { id: player_id });
+	(*game_manager)
+		.clone()
+		.cleanup(game_id, player_id, (*broadcast_manager).clone());
 	return Json(game_id);
 }
 
@@ -63,10 +66,29 @@ async fn play(
 	};
 	let player_id = player_manager.get_player_id(cookies);
 	let game_manager = (*game_manager).clone();
+	let games = game_manager.games.lock().await;
+	match games.get(&game_id) {
+		Some(game) => {
+			if !game.has_player(player_id) {
+				return Err(ErrorResponse::Forbidden(()));
+			}
+		}
+		None => return Err(ErrorResponse::NotFound(())),
+	}
+	drop(games);
 	Ok(ws.channel(move |mut socket| {
 		Box::pin(async move {
-			game_manager.update_listeners(game_id, player_id, 1).await;
+			let listeners = game_manager.update_listeners(game_id, player_id, 1).await;
 			send_game_state(&mut socket, &game_manager, game_id).await;
+			if listeners == 1 {
+				// werent listening before and are now
+				match broadcast_manager.get_sender(game_id).await {
+					Some(broadcast) => {
+						let _ = broadcast.send(PlayResponse::PlayerJoined { id: player_id });
+					}
+					None => {}
+				};
+			}
 			let close_message;
 			loop {
 				tokio::select! {
@@ -108,7 +130,16 @@ async fn play(
 					}
 				}
 			}
-			game_manager.update_listeners(game_id, player_id, -1).await;
+			let listeners = game_manager.update_listeners(game_id, player_id, -1).await;
+			if listeners == 0 {
+				// were listening before and arent anymore
+				match broadcast_manager.get_sender(game_id).await {
+					Some(broadcast) => {
+						let _ = broadcast.send(PlayResponse::PlayerLeft { id: player_id });
+					}
+					None => {}
+				};
+			}
 			game_manager.cleanup(game_id, player_id, broadcast_manager);
 			let close_frame = ws::frame::CloseFrame {
 				code: ws::frame::CloseCode::Normal,
@@ -129,8 +160,11 @@ pub enum PlayRequest {
 #[derive(Serialize, Clone, Debug)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub enum PlayResponse {
+	PlayerAdded { id: u64 },
 	PlayerJoined { id: u64 },
-	Turn,
+	PlayerLeft { id: u64 },
+	GameState { state: GameState },
+	Turn {},
 	InvalidJSON,
 }
 
@@ -153,14 +187,14 @@ async fn handle_play_request(
 	};
 	match request {
 		PlayRequest::Turn => {
-			let _ = broadcast.send(PlayResponse::Turn);
+			let _ = broadcast.send(PlayResponse::Turn {});
 		}
 	};
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
-struct GameState {
+pub struct GameState {
 	pub players: Vec<u64>,
 	pub listening_players: Vec<u64>,
 	pub board: [[Tile; 8]; 8],
@@ -174,15 +208,17 @@ async fn send_game_state(socket: &mut DuplexStream, game_manager: &GameManager, 
 	};
 	let _ = socket
 		.send(ws::Message::text(
-			serde_json::to_string(&GameState {
-				board: game.board.clone(),
-				players: game.players.clone(),
-				listening_players: game
-					.listening_players
-					.iter()
-					.filter(|(_player_id, listen_count)| **listen_count > 0)
-					.map(|(player_id, _listen_count)| *player_id)
-					.collect(),
+			serde_json::to_string(&PlayResponse::GameState {
+				state: GameState {
+					board: game.board.clone(),
+					players: game.players.clone(),
+					listening_players: game
+						.listening_players
+						.iter()
+						.filter(|(_player_id, listen_count)| **listen_count > 0)
+						.map(|(player_id, _listen_count)| *player_id)
+						.collect(),
+				},
 			})
 			.unwrap(),
 		))
