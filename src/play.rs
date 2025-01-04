@@ -141,7 +141,7 @@ async fn play(
 									Some(s) => s,
 									None => continue,
 								};
-								handle_play_request(&text, &mut socket, &broadcast).await;
+								handle_play_request(player_id, game_id, game_manager.clone(), &text, &mut socket, &broadcast).await;
 							}
 							ws::Message::Close(_) => {
 								close_message = "client disconnected";
@@ -201,11 +201,13 @@ async fn play(
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub enum PlayRequest {
 	Turn,
+	ChatMessage { message: String },
 }
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub enum PlayResponse {
+	InvalidRequest,
 	PlayerAdded { id: u64 },
 	PlayerRemoved { id: u64 },
 	PlayerJoined { id: u64 },
@@ -213,10 +215,13 @@ pub enum PlayResponse {
 	GameState { state: GameState },
 	Start,
 	Turn {},
-	InvalidJSON,
+	ChatMessage { id: u64, message: String },
 }
 
 async fn handle_play_request(
+	player_id: u64,
+	game_id: u64,
+	game_manager: Arc<GameManager>,
 	text: &str,
 	socket: &mut DuplexStream,
 	broadcast: &Sender<PlayResponse>,
@@ -227,7 +232,7 @@ async fn handle_play_request(
 			// client sent invalid request
 			let _ = socket
 				.send(ws::Message::text(
-					serde_json::to_string(&PlayResponse::InvalidJSON).unwrap(),
+					serde_json::to_string(&PlayResponse::InvalidRequest).unwrap(),
 				))
 				.await;
 			return;
@@ -235,7 +240,20 @@ async fn handle_play_request(
 	};
 	match request {
 		PlayRequest::Turn => {
+			let games = game_manager.games.lock().await;
+			let game = match games.get(&game_id) {
+				Some(g) => g,
+				None => {
+					return;
+				}
+			};
 			let _ = broadcast.send(PlayResponse::Turn {});
+		}
+		PlayRequest::ChatMessage { message } => {
+			let _ = broadcast.send(PlayResponse::ChatMessage {
+				id: player_id,
+				message,
+			});
 		}
 	};
 }
