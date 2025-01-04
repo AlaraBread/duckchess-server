@@ -35,7 +35,6 @@ impl GameManager {
 	) -> u64 {
 		let mut waiting_games = self.waiting_games.lock().await;
 		let mut games = self.games.lock().await;
-		println!("{:?}", games.keys().map(|k| *k).collect::<Vec<u64>>());
 		// maybe make some better matchmaking at some point
 		match waiting_games.iter().enumerate().find(|(_idx, game_id)| {
 			games
