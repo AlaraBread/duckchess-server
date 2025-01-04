@@ -6,6 +6,7 @@ use rocket::{
 };
 use std::{
 	collections::{HashMap, VecDeque},
+	future::Future,
 	sync::{
 		atomic::{AtomicU64, Ordering},
 		Arc,
@@ -34,6 +35,7 @@ impl GameManager {
 	) -> u64 {
 		let mut waiting_games = self.waiting_games.lock().await;
 		let mut games = self.games.lock().await;
+		println!("{:?}", games.keys().map(|k| *k).collect::<Vec<u64>>());
 		// maybe make some better matchmaking at some point
 		match waiting_games.iter().enumerate().find(|(_idx, game_id)| {
 			games
@@ -52,7 +54,7 @@ impl GameManager {
 			}
 			None => {
 				let id = self.game_counter.fetch_add(1, Ordering::Relaxed) + 1;
-				let mut game = Game::default();
+				let mut game = Game::new(id);
 				game.join(player_id);
 				games.insert(id, game);
 				waiting_games.push_back(id);
@@ -60,6 +62,10 @@ impl GameManager {
 				return id;
 			}
 		}
+	}
+	pub async fn add_game_to_queue(&self, game_id: u64) {
+		let mut waiting = self.waiting_games.lock().await;
+		waiting.push_front(game_id);
 	}
 	pub async fn update_listeners(&self, game_id: u64, player_id: u64, change: i32) -> i32 {
 		let mut games = self.games.lock().await;
@@ -69,12 +75,11 @@ impl GameManager {
 		}
 		return 0;
 	}
-	pub fn cleanup(
-		self: Arc<Self>,
-		game_id: u64,
-		player_id: u64,
-		broadcast_manager: Arc<BroadcastManager>,
-	) {
+	pub fn cleanup<F, Fut>(self: Arc<Self>, game_id: u64, player_id: u64, cleanup_fn: F)
+	where
+		F: FnOnce() -> Fut + Send + 'static,
+		Fut: Future<Output = ()> + Send,
+	{
 		task::spawn(async move {
 			let mut games = self.games.lock().await;
 			let game = match games.get_mut(&game_id) {
@@ -83,7 +88,9 @@ impl GameManager {
 					return;
 				}
 			};
-			let prev_counter = game.cleanup_counter.fetch_add(1, Ordering::Relaxed) + 1;
+			let counter = game.cleanup_counters.entry(player_id).or_insert(0);
+			*counter += 1;
+			let counter = *counter;
 			drop(games);
 			time::sleep(Duration::from_secs(10)).await;
 			let mut games = self.games.lock().await;
@@ -93,12 +100,15 @@ impl GameManager {
 					return;
 				}
 			};
-			let new_counter = game.cleanup_counter.load(Ordering::Relaxed);
-			if new_counter != prev_counter || game.get_listen_count(player_id) > 0 {
+			let new_counter = *game
+				.cleanup_counters
+				.get(&player_id)
+				.expect("just inserted");
+			drop(games);
+			if new_counter != counter {
 				return;
 			}
-			games.remove(&game_id);
-			broadcast_manager.remove(game_id).await;
+			cleanup_fn().await;
 		});
 	}
 }

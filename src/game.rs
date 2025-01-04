@@ -3,6 +3,8 @@ use std::{collections::HashMap, sync::atomic::AtomicU64};
 use rocket::serde;
 use serde::Serialize;
 
+use crate::{broadcast_manager::BroadcastManager, play::PlayResponse};
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub enum PieceType {
@@ -50,7 +52,9 @@ pub struct Game {
 	pub listening_players: HashMap<u64, i32>,
 	pub players: Vec<u64>,
 	pub board: [[Tile; 8]; 8],
-	pub cleanup_counter: AtomicU64,
+	pub cleanup_counters: HashMap<u64, u64>,
+	pub started: bool,
+	pub id: u64,
 }
 
 impl Game {
@@ -82,14 +86,22 @@ impl Game {
 	pub fn has_player(&self, player_id: u64) -> bool {
 		return self.players.contains(&player_id);
 	}
+	pub async fn start(&mut self, broadcast_manager: &BroadcastManager) {
+		self.started = true;
+		if let Some(broadcast) = broadcast_manager.get_sender(self.id).await {
+			let _ = broadcast.send(PlayResponse::Start);
+		}
+	}
 }
 
-impl Default for Game {
-	fn default() -> Self {
+impl Game {
+	pub fn new(id: u64) -> Self {
 		Self {
 			players: Default::default(),
 			listening_players: Default::default(),
-			cleanup_counter: AtomicU64::new(0),
+			cleanup_counters: Default::default(),
+			started: false,
+			id,
 			board: (0..8)
 				.into_iter()
 				.map(|i| {
