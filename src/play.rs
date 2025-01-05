@@ -264,6 +264,7 @@ pub struct GameState {
 	pub players: Vec<u64>,
 	pub listening_players: Vec<u64>,
 	pub board: [[Tile; 8]; 8],
+	pub started: bool,
 }
 
 async fn send_game_state(socket: &mut DuplexStream, game_manager: &GameManager, game_id: u64) {
@@ -278,6 +279,7 @@ async fn send_game_state(socket: &mut DuplexStream, game_manager: &GameManager, 
 				state: GameState {
 					board: game.board.clone(),
 					players: game.players.clone(),
+					started: game.started,
 					listening_players: game
 						.listening_players
 						.iter()

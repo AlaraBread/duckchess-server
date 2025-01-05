@@ -17,7 +17,7 @@ pub enum PieceType {
 }
 
 #[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
+#[serde(crate = "rocket::serde", rename_all = "camelCase")]
 pub enum FloorType {
 	Light,
 	Dark,
