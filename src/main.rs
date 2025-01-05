@@ -1,5 +1,6 @@
 use rocket::launch;
 
+mod board;
 mod broadcast_manager;
 mod cors;
 mod game;

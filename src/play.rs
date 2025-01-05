@@ -17,9 +17,10 @@ use serde::{Deserialize, Serialize};
 use ws::{stream::DuplexStream, Channel, WebSocket};
 
 use crate::{
-	broadcast_manager::{self, BroadcastManager},
-	game::Tile,
-	game_manager::{self, GameManager},
+	board::{Board, Move, MoveType},
+	broadcast_manager::BroadcastManager,
+	game::Game,
+	game_manager::GameManager,
 	player_manager::PlayerManager,
 };
 
@@ -104,6 +105,9 @@ async fn play(
 	Ok(ws.channel(move |mut socket| {
 		Box::pin(async move {
 			let listeners = game_manager.update_listeners(game_id, player_id, 1).await;
+			let _ = socket.send(ws::Message::text(
+				serde_json::to_string(&PlayResponse::JoinInfo { id: player_id }).unwrap(),
+			)).await;
 			send_game_state(&mut socket, &game_manager, game_id).await;
 			if listeners == 1 {
 				// werent listening before and are now
@@ -200,7 +204,7 @@ async fn play(
 #[derive(Deserialize, Debug)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub enum PlayRequest {
-	Turn,
+	Turn { piece_idx: usize, move_idx: usize },
 	ChatMessage { message: String },
 }
 
@@ -208,14 +212,42 @@ pub enum PlayRequest {
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub enum PlayResponse {
 	InvalidRequest,
-	PlayerAdded { id: u64 },
-	PlayerRemoved { id: u64 },
-	PlayerJoined { id: u64 },
-	PlayerLeft { id: u64 },
-	GameState { state: GameState },
-	Start,
-	Turn {},
-	ChatMessage { id: u64, message: String },
+	JoinInfo {
+		// the reciever's player id
+		id: u64,
+	},
+	PlayerAdded {
+		id: u64,
+	},
+	PlayerRemoved {
+		id: u64,
+	},
+	PlayerJoined {
+		id: u64,
+	},
+	PlayerLeft {
+		id: u64,
+	},
+	GameState {
+		state: GameState,
+	},
+	Start {
+		state: GameState,
+	},
+	TurnStart {
+		turn: u64,
+		move_pieces: Vec<(i8, i8)>,
+		moves: Vec<Vec<(i8, i8)>>,
+	},
+	Move {
+		move_type: MoveType,
+		from: (i8, i8),
+		to: (i8, i8),
+	},
+	ChatMessage {
+		id: u64,
+		message: String,
+	},
 }
 
 async fn handle_play_request(
@@ -239,15 +271,33 @@ async fn handle_play_request(
 		}
 	};
 	match request {
-		PlayRequest::Turn => {
-			let games = game_manager.games.lock().await;
-			let game = match games.get(&game_id) {
-				Some(g) => g,
-				None => {
+		PlayRequest::Turn {
+			move_idx,
+			piece_idx,
+		} => {
+			let mut games = game_manager.games.lock().await;
+			let board = match games.get_mut(&game_id) {
+				Some(Game {
+					board: Some(board), ..
+				}) => board,
+				_ => {
 					return;
 				}
 			};
-			let _ = broadcast.send(PlayResponse::Turn {});
+			if board.turn != player_id {
+				return;
+			}
+			let move_response = board.execute_move(piece_idx, move_idx);
+			if let Some(move_response) = move_response {
+				let _ = broadcast.send(move_response);
+				let _ = broadcast.send(board.generate_moves());
+			} else {
+				let _ = socket
+					.send(ws::Message::text(
+						serde_json::to_string(&PlayResponse::InvalidRequest).unwrap(),
+					))
+					.await;
+			}
 		}
 		PlayRequest::ChatMessage { message } => {
 			let _ = broadcast.send(PlayResponse::ChatMessage {
@@ -263,7 +313,7 @@ async fn handle_play_request(
 pub struct GameState {
 	pub players: Vec<u64>,
 	pub listening_players: Vec<u64>,
-	pub board: [[Tile; 8]; 8],
+	pub board: Option<Board>,
 	pub started: bool,
 }
 
@@ -276,17 +326,7 @@ async fn send_game_state(socket: &mut DuplexStream, game_manager: &GameManager, 
 	let _ = socket
 		.send(ws::Message::text(
 			serde_json::to_string(&PlayResponse::GameState {
-				state: GameState {
-					board: game.board.clone(),
-					players: game.players.clone(),
-					started: game.started,
-					listening_players: game
-						.listening_players
-						.iter()
-						.filter(|(_player_id, listen_count)| **listen_count > 0)
-						.map(|(player_id, _listen_count)| *player_id)
-						.collect(),
-				},
+				state: game.get_game_state(),
 			})
 			.unwrap(),
 		))

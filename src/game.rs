@@ -1,57 +1,16 @@
 use std::collections::HashMap;
 
-use rocket::serde;
-use serde::Serialize;
-
-use crate::{broadcast_manager::BroadcastManager, play::PlayResponse};
-
-#[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
-pub enum PieceType {
-	King { has_castled: bool },
-	Queen,
-	Castle,
-	Bishop,
-	Knight,
-	Pawn { has_moved: bool },
-}
-
-#[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase")]
-pub enum FloorType {
-	Light,
-	Dark,
-	Ice,
-	Water,
-	Fire,
-	Wall,
-}
-
-#[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
-pub struct Piece {
-	piece_type: PieceType,
-	owner: u64,
-}
-
-#[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
-pub struct Tile {
-	floor: FloorType,
-	piece: Option<Piece>,
-}
-
-impl Tile {
-	pub fn new(floor: FloorType) -> Self {
-		return Self { floor, piece: None };
-	}
-}
+use crate::{
+	board::Board,
+	broadcast_manager::BroadcastManager,
+	play::{GameState, PlayResponse},
+};
 
 #[derive(Debug)]
 pub struct Game {
 	pub listening_players: HashMap<u64, i32>,
 	pub players: Vec<u64>,
-	pub board: [[Tile; 8]; 8],
+	pub board: Option<Board>,
 	pub cleanup_counters: HashMap<u64, u64>,
 	pub started: bool,
 	pub id: u64,
@@ -88,10 +47,33 @@ impl Game {
 	}
 	pub async fn start(&mut self, broadcast_manager: &BroadcastManager) {
 		self.started = true;
+		self.board = Some(Board::new(self.players[0], self.players[1]));
 		if let Some(broadcast) = broadcast_manager.get_sender(self.id).await {
-			let _ = broadcast.send(PlayResponse::Start);
+			let _ = broadcast.send(PlayResponse::Start {
+				state: self.get_game_state(),
+			});
+			let _ = broadcast.send(
+				self.board
+					.as_mut()
+					.expect("just set the board")
+					.generate_moves(),
+			);
 		}
 	}
+	pub fn get_game_state(&self) -> GameState {
+		GameState {
+			board: self.board.clone(),
+			players: self.players.clone(),
+			started: self.started,
+			listening_players: self
+				.listening_players
+				.iter()
+				.filter(|(_player_id, listen_count)| **listen_count > 0)
+				.map(|(player_id, _listen_count)| *player_id)
+				.collect(),
+		}
+	}
+	pub async fn turn(&mut self, broadcast_manager: &BroadcastManager) {}
 }
 
 impl Game {
@@ -100,27 +82,9 @@ impl Game {
 			players: Default::default(),
 			listening_players: Default::default(),
 			cleanup_counters: Default::default(),
+			board: Default::default(),
 			started: false,
 			id,
-			board: (0..8)
-				.into_iter()
-				.map(|i| {
-					(0..8)
-						.into_iter()
-						.map(|j| {
-							if (i + j) % 2 == 0 {
-								Tile::new(FloorType::Light)
-							} else {
-								Tile::new(FloorType::Dark)
-							}
-						})
-						.collect::<Vec<Tile>>()
-						.try_into()
-						.unwrap()
-				})
-				.collect::<Vec<[Tile; 8]>>()
-				.try_into()
-				.unwrap(),
 		}
 	}
 }
