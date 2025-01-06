@@ -71,9 +71,12 @@ pub struct Board {
 	pub turn: Player,
 	pub white_player: u64,
 	pub black_player: u64,
-	pub kings: [Vec2; 2],
 	pub board: [[Tile; 8]; 8],
+	#[serde(skip)]
+	pub kings: [Vec2; 2],
+	#[serde(skip)]
 	pub move_pieces: Vec<Vec2>,
+	#[serde(skip)]
 	pub moves: Vec<Vec<Move>>,
 }
 
@@ -120,15 +123,10 @@ impl Board {
 // do moves
 impl Board {
 	pub fn execute_move(&mut self, piece_idx: usize, move_idx: usize) -> Option<PlayResponse> {
-		let start = *self.move_pieces.get(piece_idx)?;
 		let mov = self.moves.get(piece_idx)?.get(move_idx)?.clone();
 		self.do_move(&mov);
 		self.post_turn();
-		return Some(PlayResponse::Move {
-			move_type: mov.move_type,
-			from: start,
-			to: mov.to,
-		});
+		return Some(PlayResponse::Move { m: mov });
 	}
 	fn do_move(&mut self, mov: &Move) {
 		let start = mov.from;

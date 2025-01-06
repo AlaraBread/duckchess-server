@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use ws::{stream::DuplexStream, Channel, WebSocket};
 
 use crate::{
-	board::{Board, MoveType},
+	board::{Board, Move, MoveType},
 	broadcast_manager::BroadcastManager,
 	game::Game,
 	game_manager::GameManager,
@@ -106,10 +106,7 @@ async fn play(
 	Ok(ws.channel(move |mut socket| {
 		Box::pin(async move {
 			let listeners = game_manager.update_listeners(game_id, player_id, 1).await;
-			let _ = socket.send(ws::Message::text(
-				serde_json::to_string(&PlayResponse::JoinInfo { id: player_id }).unwrap(),
-			)).await;
-			send_game_state(&mut socket, &game_manager, game_id).await;
+			send_game_state(&mut socket, &game_manager, game_id, player_id).await;
 			if listeners == 1 {
 				// werent listening before and are now
 				if let Some(broadcast) = broadcast_manager.get_sender(game_id).await {
@@ -213,7 +210,7 @@ pub enum PlayRequest {
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub enum PlayResponse {
 	InvalidRequest,
-	JoinInfo {
+	SelfInfo {
 		// the reciever's player id
 		id: u64,
 	},
@@ -229,10 +226,10 @@ pub enum PlayResponse {
 	PlayerLeft {
 		id: u64,
 	},
-	GameState {
+	Start {
 		state: GameState,
 	},
-	Start {
+	GameState {
 		state: GameState,
 	},
 	TurnStart {
@@ -241,9 +238,7 @@ pub enum PlayResponse {
 		moves: Vec<Vec<Vec2>>,
 	},
 	Move {
-		move_type: MoveType,
-		from: Vec2,
-		to: Vec2,
+		m: Move,
 	},
 	ChatMessage {
 		id: u64,
@@ -319,7 +314,17 @@ pub struct GameState {
 	pub started: bool,
 }
 
-async fn send_game_state(socket: &mut DuplexStream, game_manager: &GameManager, game_id: u64) {
+async fn send_game_state(
+	socket: &mut DuplexStream,
+	game_manager: &GameManager,
+	game_id: u64,
+	player_id: u64,
+) {
+	let _ = socket
+		.send(ws::Message::text(
+			serde_json::to_string(&PlayResponse::SelfInfo { id: player_id }).unwrap(),
+		))
+		.await;
 	let games = game_manager.games.lock().await;
 	let game = match games.get(&game_id) {
 		Some(game) => game,
@@ -333,6 +338,11 @@ async fn send_game_state(socket: &mut DuplexStream, game_manager: &GameManager, 
 			.unwrap(),
 		))
 		.await;
+	if let Some(board) = &game.board {
+		let _ = socket.send(ws::Message::text(
+			serde_json::to_string(&board.turn_message()).unwrap(),
+		));
+	}
 }
 
 #[derive(Responder)]
