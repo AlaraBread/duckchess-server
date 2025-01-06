@@ -28,7 +28,7 @@ impl Not for Player {
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase")]
-pub enum FloorType {
+pub enum Floor {
 	Light,
 	Dark,
 }
@@ -36,14 +36,8 @@ pub enum FloorType {
 #[derive(Serialize, Clone, Debug)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub struct Tile {
-	pub floor: FloorType,
+	pub floor: Floor,
 	pub piece: Option<Piece>,
-}
-
-impl Tile {
-	pub fn new(floor: FloorType) -> Self {
-		return Self { floor, piece: None };
-	}
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -156,6 +150,9 @@ impl Board {
 			}
 			_ => {}
 		}
+		if let Some(ref mut piece) = piece {
+			piece.has_moved = true;
+		}
 		self.get_tile_mut(end).piece = piece;
 		if start != end {
 			self.get_tile_mut(start).piece = Default::default();
@@ -209,10 +206,17 @@ impl Board {
 					(0..8)
 						.into_iter()
 						.map(|j| {
+							let p = DEFAULT_BOARD[i][j].clone();
 							if (i + j) % 2 == 0 {
-								Tile::new(FloorType::Light)
+								Tile {
+									floor: Floor::Light,
+									piece: p,
+								}
 							} else {
-								Tile::new(FloorType::Dark)
+								Tile {
+									floor: Floor::Dark,
+									piece: p,
+								}
 							}
 						})
 						.collect::<Vec<Tile>>()
@@ -225,3 +229,113 @@ impl Board {
 		}
 	}
 }
+
+// put the client in charge of this at some point
+const DEFAULT_BOARD: [[Option<Piece>; 8]; 8] = [
+	[
+		Some(Piece {
+			piece_type: PieceType::Castle,
+			owner: Player::Black,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::Knight,
+			owner: Player::Black,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::Bishop,
+			owner: Player::Black,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::Queen,
+			owner: Player::Black,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::King,
+			owner: Player::Black,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::Bishop,
+			owner: Player::Black,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::Knight,
+			owner: Player::Black,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::Castle,
+			owner: Player::Black,
+			has_moved: false,
+		}),
+	],
+	[const {
+		Some(Piece {
+			piece_type: PieceType::Pawn {
+				turns_since_double_advance: None,
+			},
+			owner: Player::Black,
+			has_moved: false,
+		})
+	}; 8],
+	[const { None }; 8],
+	[const { None }; 8],
+	[const { None }; 8],
+	[const { None }; 8],
+	[const {
+		Some(Piece {
+			piece_type: PieceType::Pawn {
+				turns_since_double_advance: None,
+			},
+			owner: Player::White,
+			has_moved: false,
+		})
+	}; 8],
+	[
+		Some(Piece {
+			piece_type: PieceType::Castle,
+			owner: Player::White,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::Knight,
+			owner: Player::White,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::Bishop,
+			owner: Player::White,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::Queen,
+			owner: Player::White,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::King,
+			owner: Player::White,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::Bishop,
+			owner: Player::White,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::Knight,
+			owner: Player::White,
+			has_moved: false,
+		}),
+		Some(Piece {
+			piece_type: PieceType::Castle,
+			owner: Player::White,
+			has_moved: false,
+		}),
+	],
+];
