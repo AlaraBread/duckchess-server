@@ -157,7 +157,9 @@ impl Board {
 			_ => {}
 		}
 		self.get_tile_mut(end).piece = piece;
-		self.get_tile_mut(start).piece = Default::default();
+		if start != end {
+			self.get_tile_mut(start).piece = Default::default();
+		}
 	}
 	fn post_turn(&mut self) {
 		for y in 0..8 {
