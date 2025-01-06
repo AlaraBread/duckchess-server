@@ -17,11 +17,12 @@ use serde::{Deserialize, Serialize};
 use ws::{stream::DuplexStream, Channel, WebSocket};
 
 use crate::{
-	board::{Board, Move, MoveType},
+	board::{Board, MoveType},
 	broadcast_manager::BroadcastManager,
 	game::Game,
 	game_manager::GameManager,
 	player_manager::PlayerManager,
+	vec2::Vec2,
 };
 
 pub fn stage() -> AdHoc {
@@ -236,13 +237,13 @@ pub enum PlayResponse {
 	},
 	TurnStart {
 		turn: u64,
-		move_pieces: Vec<(i8, i8)>,
-		moves: Vec<Vec<(i8, i8)>>,
+		move_pieces: Vec<Vec2>,
+		moves: Vec<Vec<Vec2>>,
 	},
 	Move {
 		move_type: MoveType,
-		from: (i8, i8),
-		to: (i8, i8),
+		from: Vec2,
+		to: Vec2,
 	},
 	ChatMessage {
 		id: u64,
@@ -284,13 +285,14 @@ async fn handle_play_request(
 					return;
 				}
 			};
-			if board.turn != player_id {
+			if board.get_player_id() != player_id {
 				return;
 			}
 			let move_response = board.execute_move(piece_idx, move_idx);
 			if let Some(move_response) = move_response {
 				let _ = broadcast.send(move_response);
-				let _ = broadcast.send(board.generate_moves());
+				board.generate_moves();
+				let _ = broadcast.send(board.turn_message());
 			} else {
 				let _ = socket
 					.send(ws::Message::text(

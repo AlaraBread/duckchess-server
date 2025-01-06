@@ -1,18 +1,29 @@
+use std::ops::Not;
+
 use serde::Serialize;
 
-use crate::play::PlayResponse;
+use crate::{
+	piece::{Piece, PieceType},
+	play::PlayResponse,
+	vec2::Vec2,
+};
 
-#[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
-pub enum PieceType {
-	King,
-	Queen,
-	Castle,
-	Bishop,
-	Knight,
-	Pawn {
-		turns_since_double_advance: Option<i32>,
-	},
+#[derive(Debug, Clone, Copy, Serialize, Eq, PartialEq)]
+#[serde(crate = "rocket::serde", rename_all = "camelCase")]
+pub enum Player {
+	White,
+	Black,
+}
+
+impl Not for Player {
+	type Output = Player;
+
+	fn not(self) -> Self::Output {
+		match self {
+			Player::White => Player::Black,
+			Player::Black => Player::White,
+		}
+	}
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -24,191 +35,9 @@ pub enum FloorType {
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
-pub struct Piece {
-	piece_type: PieceType,
-	owner: u64,
-	has_moved: bool,
-}
-
-impl Piece {
-	fn generate_simple_moves(
-		&self,
-		offsets: &[(i8, i8)],
-		limit: i8,
-		pos: (i8, i8),
-		move_type: MoveType,
-		board: &Board,
-	) -> Vec<Move> {
-		let mut moves = Vec::new();
-		for dir in offsets {
-			let (mut x, mut y) = pos;
-			x += dir.0;
-			y += dir.1;
-			let mut limit = limit;
-			while x >= 0 && x < 8 && y >= 0 && y < 8 && limit > 0 {
-				if let Some(blocking) = &board.board[y as usize][x as usize].piece {
-					if blocking.owner != self.owner {
-						// capture
-						moves.push(Move {
-							move_type,
-							to: (x, y),
-						});
-					}
-					break;
-				}
-				moves.push(Move {
-					move_type,
-					to: (x, y),
-				});
-				x += dir.0;
-				y += dir.1;
-				limit -= 1;
-			}
-		}
-		return moves;
-	}
-	pub fn generate_moves(&self, board: &Board, pos: (i8, i8)) -> Vec<Move> {
-		if self.owner != board.turn {
-			return vec![];
-		}
-		return match self.piece_type {
-			PieceType::King => self.generate_simple_moves(
-				&[
-					(0, 1),
-					(0, -1),
-					(1, 0),
-					(-1, 0),
-					(-1, -1),
-					(-1, 1),
-					(1, -1),
-					(1, 1),
-				],
-				1,
-				pos,
-				MoveType::SlidingMove,
-				board,
-			),
-			PieceType::Queen => self.generate_simple_moves(
-				&[
-					(0, 1),
-					(0, -1),
-					(1, 0),
-					(-1, 0),
-					(-1, -1),
-					(-1, 1),
-					(1, -1),
-					(1, 1),
-				],
-				i8::MAX,
-				pos,
-				MoveType::SlidingMove,
-				board,
-			),
-			PieceType::Castle => self.generate_simple_moves(
-				&[(0, 1), (0, -1), (1, 0), (-1, 0)],
-				i8::MAX,
-				pos,
-				MoveType::SlidingMove,
-				board,
-			),
-			PieceType::Bishop => self.generate_simple_moves(
-				&[(-1, -1), (-1, 1), (1, -1), (1, 1)],
-				i8::MAX,
-				pos,
-				MoveType::SlidingMove,
-				board,
-			),
-			PieceType::Knight => self.generate_simple_moves(
-				&[
-					(2, 1),
-					(2, -1),
-					(-2, 1),
-					(-2, -1),
-					(1, 2),
-					(1, -2),
-					(-1, 2),
-					(-1, -2),
-				],
-				1,
-				pos,
-				MoveType::JumpingMove,
-				board,
-			),
-			PieceType::Pawn { .. } => {
-				let limit = if self.has_moved { 1 } else { 2 };
-				let dir = if self.owner == board.white_player {
-					(0, -1)
-				} else {
-					(0, 1)
-				};
-				// advance by 1 and 2
-				let mut moves = (1..=limit)
-					.map(|i| Move {
-						move_type: MoveType::SlidingMove,
-						to: (pos.0 + dir.0 * i, pos.1 + dir.1 * i),
-					})
-					.filter(|m| {
-						let piece = &board.board[m.to.1 as usize][m.to.0 as usize].piece;
-						if let Some(_) = piece {
-							false
-						} else {
-							true
-						}
-					})
-					.collect::<Vec<Move>>();
-				// capture moves
-				for side in [-1, 1] {
-					if let Some(piece) =
-						&board.board[(pos.1 + dir.1) as usize][(pos.0 + side) as usize].piece
-					{
-						if piece.owner != self.owner {
-							moves.push(Move {
-								move_type: MoveType::SlidingMove,
-								to: (pos.0 + side, pos.1 + dir.1),
-							});
-						}
-					}
-				}
-				// en passant captures
-				for side in [-1, 1] {
-					match &board.board[pos.1 as usize][(pos.0 + side) as usize].piece {
-						Some(Piece {
-							piece_type:
-								PieceType::Pawn {
-									turns_since_double_advance: Some(1),
-								},
-							owner,
-							..
-						}) => {
-							if *owner != self.owner {
-								moves.push(Move {
-									move_type: MoveType::SlidingMove,
-									to: (pos.0 + side, pos.1 + dir.1),
-								})
-							}
-						}
-						_ => {}
-					}
-				}
-				return moves;
-			}
-		};
-	}
-	pub fn post_turn(&mut self) {
-		match &mut self.piece_type {
-			PieceType::Pawn {
-				turns_since_double_advance: Some(turns_since_double_advance),
-			} => *turns_since_double_advance += 1,
-			_ => {}
-		}
-	}
-}
-
-#[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub struct Tile {
-	floor: FloorType,
-	piece: Option<Piece>,
+	pub floor: FloorType,
+	pub piece: Option<Piece>,
 }
 
 impl Tile {
@@ -220,8 +49,9 @@ impl Tile {
 #[derive(Debug, Clone, Serialize)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub struct Move {
-	move_type: MoveType,
-	to: (i8, i8),
+	pub move_type: MoveType,
+	pub from: Vec2,
+	pub to: Vec2,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -231,39 +61,65 @@ pub enum MoveType {
 	SlidingMove,
 }
 
+impl Move {
+	pub fn would_cause_lose(&self, board: &Board) -> bool {
+		// probably a more efficient way to do this
+		let mut board = board.clone();
+		board.do_move(self);
+		board.post_turn();
+		return board.about_to_win();
+	}
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub struct Board {
-	pub turn: u64,
+	pub turn: Player,
 	pub white_player: u64,
 	pub black_player: u64,
+	pub kings: [Vec2; 2],
 	pub board: [[Tile; 8]; 8],
-	pub move_pieces: Vec<(i8, i8)>,
+	pub move_pieces: Vec<Vec2>,
 	pub moves: Vec<Vec<Move>>,
 }
 
 // movegen
 impl Board {
-	pub fn generate_moves(&mut self) -> PlayResponse {
+	pub fn generate_moves(&mut self) {
 		self.move_pieces = Vec::new();
 		self.moves = Vec::new();
-		for x in 0..8 {
-			for y in 0..8 {
-				if let Some(piece) = &self.board[y as usize][x as usize].piece {
-					self.move_pieces.push((x, y));
-					self.moves.push(piece.generate_moves(self, (x, y)));
+		for y in 0..8 {
+			for x in 0..8 {
+				let p = Vec2(x, y);
+				if let Some(piece) = &self.get_tile(p).piece {
+					self.moves.push(piece.generate_moves(self, p));
+					self.move_pieces.push(p);
 				}
 			}
 		}
-		return PlayResponse::TurnStart {
-			turn: self.turn,
+	}
+	pub fn turn_message(&self) -> PlayResponse {
+		PlayResponse::TurnStart {
+			turn: self.get_player_id(),
 			move_pieces: self.move_pieces.clone(),
 			moves: self
 				.moves
 				.iter()
 				.map(|moves| moves.iter().map(|m| m.to).collect())
 				.collect(),
-		};
+		}
+	}
+	pub fn about_to_win(&mut self) -> bool {
+		self.generate_moves();
+		self.moves
+			.iter()
+			.find(|moves| {
+				moves
+					.iter()
+					.find(|m| m.to == self.get_king_position(!self.turn))
+					.is_some()
+			})
+			.is_some()
 	}
 }
 
@@ -272,25 +128,21 @@ impl Board {
 	pub fn execute_move(&mut self, piece_idx: usize, move_idx: usize) -> Option<PlayResponse> {
 		let start = *self.move_pieces.get(piece_idx)?;
 		let mov = self.moves.get(piece_idx)?.get(move_idx)?.clone();
-		let end = mov.to;
-		self.do_move(start, end);
+		self.do_move(&mov);
 		self.post_turn();
-		self.turn = if self.turn == self.white_player {
-			self.black_player
-		} else {
-			self.white_player
-		};
 		return Some(PlayResponse::Move {
 			move_type: mov.move_type,
 			from: start,
-			to: end,
+			to: mov.to,
 		});
 	}
-	fn do_move(&mut self, start: (i8, i8), end: (i8, i8)) {
+	fn do_move(&mut self, mov: &Move) {
+		let start = mov.from;
+		let end = mov.to;
 		if start == end {
 			return;
 		}
-		let mut piece = self.board[start.1 as usize][start.0 as usize].piece.clone();
+		let mut piece = self.get_tile(start).piece.clone();
 		match &mut piece {
 			Some(Piece {
 				piece_type: PieceType::Pawn {
@@ -304,24 +156,47 @@ impl Board {
 			}
 			_ => {}
 		}
-		self.board[end.1 as usize][end.0 as usize].piece = piece;
-		self.board[start.1 as usize][start.0 as usize].piece = Default::default();
+		self.get_tile_mut(end).piece = piece;
+		self.get_tile_mut(start).piece = Default::default();
 	}
 	fn post_turn(&mut self) {
-		for x in 0..8 {
-			for y in 0..8 {
-				if let Some(piece) = &mut self.board[y as usize][x as usize].piece {
+		for y in 0..8 {
+			for x in 0..8 {
+				if let Some(piece) = &mut self.get_tile_mut(Vec2(x, y)).piece {
 					piece.post_turn();
 				}
 			}
 		}
+		self.turn = match self.turn {
+			Player::White => Player::Black,
+			Player::Black => Player::White,
+		};
 	}
 }
 
 impl Board {
+	pub fn get_player_id(&self) -> u64 {
+		match self.turn {
+			Player::White => self.white_player,
+			Player::Black => self.black_player,
+		}
+	}
+	pub fn get_king_position(&self, player: Player) -> Vec2 {
+		self.kings[match player {
+			Player::White => 0,
+			Player::Black => 1,
+		}]
+	}
+	pub fn get_tile(&self, pos: Vec2) -> &Tile {
+		&self.board[pos.1 as usize][pos.0 as usize]
+	}
+	pub fn get_tile_mut(&mut self, pos: Vec2) -> &mut Tile {
+		&mut self.board[pos.1 as usize][pos.0 as usize]
+	}
 	pub fn new(white_player: u64, black_player: u64) -> Self {
 		Self {
-			turn: white_player,
+			turn: Player::White,
+			kings: [Vec2(0, 0), Vec2(1, 3)],
 			white_player,
 			black_player,
 			move_pieces: Default::default(),

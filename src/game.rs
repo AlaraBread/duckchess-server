@@ -52,12 +52,9 @@ impl Game {
 			let _ = broadcast.send(PlayResponse::Start {
 				state: self.get_game_state(),
 			});
-			let _ = broadcast.send(
-				self.board
-					.as_mut()
-					.expect("just set the board")
-					.generate_moves(),
-			);
+			let board = self.board.as_mut().expect("just set the board");
+			board.generate_moves();
+			let _ = broadcast.send(board.turn_message());
 		}
 	}
 	pub fn get_game_state(&self) -> GameState {
@@ -73,7 +70,6 @@ impl Game {
 				.collect(),
 		}
 	}
-	pub async fn turn(&mut self, broadcast_manager: &BroadcastManager) {}
 }
 
 impl Game {
