@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use ws::{stream::DuplexStream, Channel, WebSocket};
 
 use crate::{
-	board::{Board, Move, MoveType},
+	board::{Board, Move, Player},
 	broadcast_manager::BroadcastManager,
 	game::Game,
 	game_manager::GameManager,
@@ -200,14 +200,24 @@ async fn play(
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
+#[serde(
+	crate = "rocket::serde",
+	rename_all = "camelCase",
+	rename_all_fields = "camelCase",
+	tag = "type"
+)]
 pub enum PlayRequest {
 	Turn { piece_idx: usize, move_idx: usize },
 	ChatMessage { message: String },
 }
 
 #[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
+#[serde(
+	crate = "rocket::serde",
+	rename_all = "camelCase",
+	rename_all_fields = "camelCase",
+	tag = "type"
+)]
 pub enum PlayResponse {
 	InvalidRequest,
 	SelfInfo {
@@ -226,14 +236,11 @@ pub enum PlayResponse {
 	PlayerLeft {
 		id: u64,
 	},
-	Start {
-		state: GameState,
-	},
 	GameState {
 		state: GameState,
 	},
 	TurnStart {
-		turn: u64,
+		turn: Player,
 		move_pieces: Vec<Vec2>,
 		moves: Vec<Vec<Vec2>>,
 	},
@@ -286,7 +293,7 @@ async fn handle_play_request(
 			let move_response = board.execute_move(piece_idx, move_idx);
 			if let Some(move_response) = move_response {
 				let _ = broadcast.send(move_response);
-				board.generate_moves();
+				board.generate_moves(true);
 				let _ = broadcast.send(board.turn_message());
 			} else {
 				let _ = socket

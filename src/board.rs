@@ -49,7 +49,7 @@ pub struct Move {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
+#[serde(crate = "rocket::serde", rename_all = "camelCase")]
 pub enum MoveType {
 	JumpingMove,
 	SlidingMove,
@@ -82,22 +82,25 @@ pub struct Board {
 
 // movegen
 impl Board {
-	pub fn generate_moves(&mut self) {
+	pub fn generate_moves(&mut self, deep: bool) {
 		self.move_pieces = Vec::new();
 		self.moves = Vec::new();
 		for y in 0..8 {
 			for x in 0..8 {
 				let p = Vec2(x, y);
 				if let Some(piece) = &self.get_tile(p).piece {
-					self.moves.push(piece.generate_moves(self, p));
-					self.move_pieces.push(p);
+					let moves = piece.generate_moves(self, p, deep);
+					if moves.len() > 0 {
+						self.moves.push(moves);
+						self.move_pieces.push(p);
+					}
 				}
 			}
 		}
 	}
 	pub fn turn_message(&self) -> PlayResponse {
 		PlayResponse::TurnStart {
-			turn: self.get_player_id(),
+			turn: self.turn,
 			move_pieces: self.move_pieces.clone(),
 			moves: self
 				.moves
@@ -107,7 +110,7 @@ impl Board {
 		}
 	}
 	pub fn about_to_win(&mut self) -> bool {
-		self.generate_moves();
+		self.generate_moves(false);
 		self.moves
 			.iter()
 			.find(|moves| {
@@ -146,6 +149,16 @@ impl Board {
 					*turns_since_double_advance = Some(0);
 				}
 			}
+			Some(Piece {
+				piece_type: PieceType::King,
+				owner,
+				..
+			}) => {
+				self.kings[match owner {
+					Player::White => 0,
+					Player::Black => 1,
+				}] = end;
+			}
 			_ => {}
 		}
 		if let Some(ref mut piece) = piece {
@@ -178,6 +191,23 @@ impl Board {
 			Player::Black => self.black_player,
 		}
 	}
+	fn find_king_position(board: &[[Tile; 8]; 8], player: Player) -> Vec2 {
+		board
+			.iter()
+			.enumerate()
+			.find_map(|(y, row)| {
+				let x = row.iter().position(|tile| match tile.piece {
+					Some(Piece {
+						piece_type: PieceType::King,
+						owner,
+						..
+					}) => owner == player,
+					_ => false,
+				});
+				x.map(|x| Vec2(x as i8, y as i8))
+			})
+			.unwrap()
+	}
 	pub fn get_king_position(&self, player: Player) -> Vec2 {
 		self.kings[match player {
 			Player::White => 0,
@@ -191,39 +221,43 @@ impl Board {
 		&mut self.board[pos.1 as usize][pos.0 as usize]
 	}
 	pub fn new(white_player: u64, black_player: u64) -> Self {
+		let board = (0..8)
+			.into_iter()
+			.map(|i| {
+				(0..8)
+					.into_iter()
+					.map(|j| {
+						let p = DEFAULT_BOARD[i][j].clone();
+						if (i + j) % 2 == 0 {
+							Tile {
+								floor: Floor::Light,
+								piece: p,
+							}
+						} else {
+							Tile {
+								floor: Floor::Dark,
+								piece: p,
+							}
+						}
+					})
+					.collect::<Vec<Tile>>()
+					.try_into()
+					.unwrap()
+			})
+			.collect::<Vec<[Tile; 8]>>()
+			.try_into()
+			.unwrap();
 		Self {
 			turn: Player::White,
-			kings: [Vec2(0, 0), Vec2(1, 3)],
 			white_player,
 			black_player,
 			move_pieces: Default::default(),
 			moves: Default::default(),
-			board: (0..8)
-				.into_iter()
-				.map(|i| {
-					(0..8)
-						.into_iter()
-						.map(|j| {
-							let p = DEFAULT_BOARD[i][j].clone();
-							if (i + j) % 2 == 0 {
-								Tile {
-									floor: Floor::Light,
-									piece: p,
-								}
-							} else {
-								Tile {
-									floor: Floor::Dark,
-									piece: p,
-								}
-							}
-						})
-						.collect::<Vec<Tile>>()
-						.try_into()
-						.unwrap()
-				})
-				.collect::<Vec<[Tile; 8]>>()
-				.try_into()
-				.unwrap(),
+			kings: [
+				Self::find_king_position(&board, Player::White),
+				Self::find_king_position(&board, Player::Black),
+			],
+			board,
 		}
 	}
 }

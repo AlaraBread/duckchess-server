@@ -6,7 +6,12 @@ use crate::{
 };
 
 #[derive(Serialize, Clone, Debug)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
+#[serde(
+	crate = "rocket::serde",
+	rename_all = "camelCase",
+	rename_all_fields = "camelCase",
+	tag = "type"
+)]
 pub enum PieceType {
 	King,
 	Queen,
@@ -38,17 +43,17 @@ impl Piece {
 	) -> Vec<Move> {
 		let mut moves = Vec::new();
 		for dir in offsets {
-			let mut pos = pos;
-			pos += dir;
+			let mut to = pos;
+			to += dir;
 			let mut limit = limit;
-			while pos.is_inside_board() && limit > 0 {
-				if let Some(blocking) = &board.get_tile(pos).piece {
+			while to.is_inside_board() && limit > 0 {
+				if let Some(blocking) = &board.get_tile(to).piece {
 					if blocking.owner != self.owner {
 						// capture
 						moves.push(Move {
 							move_type,
 							from: pos,
-							to: pos,
+							to,
 						});
 					}
 					break;
@@ -56,19 +61,19 @@ impl Piece {
 				moves.push(Move {
 					move_type,
 					from: pos,
-					to: pos,
+					to,
 				});
-				pos += dir;
+				to += dir;
 				limit -= 1;
 			}
 		}
 		return moves;
 	}
-	pub fn generate_moves(&self, board: &Board, pos: Vec2) -> Vec<Move> {
+	pub fn generate_moves(&self, board: &Board, pos: Vec2, deep: bool) -> Vec<Move> {
 		if self.owner != board.turn {
 			return vec![];
 		}
-		return match self.piece_type {
+		let moves = match self.piece_type {
 			PieceType::King => self.generate_simple_moves(
 				&[
 					Vec2(0, 1),
@@ -137,28 +142,25 @@ impl Piece {
 					Player::White => Vec2(0, -1),
 					Player::Black => Vec2(0, 1),
 				};
+				let mut moves = Vec::new();
 				// advance by 1 and 2
-				let mut moves = (1..=limit)
-					.map(|i| Move {
+				for i in 1..=limit {
+					let to = pos + dir * i;
+					if !to.is_inside_board() || board.get_tile(to).piece.is_some() {
+						break;
+					}
+					moves.push(Move {
 						move_type: MoveType::SlidingMove,
 						from: pos,
-						to: pos + dir * i,
-					})
-					.filter(|m| {
-						if !m.to.is_inside_board() {
-							return false;
-						}
-						let piece = &board.get_tile(m.to).piece;
-						if let Some(_) = piece {
-							false
-						} else {
-							true
-						}
-					})
-					.collect::<Vec<Move>>();
+						to,
+					});
+				}
 				// capture moves
 				for side in [Vec2(-1, 0), Vec2(1, 0)] {
 					let to = pos + dir + side;
+					if !to.is_inside_board() {
+						continue;
+					}
 					if let Some(piece) = &board.get_tile(to).piece {
 						if piece.owner != self.owner {
 							moves.push(Move {
@@ -171,6 +173,10 @@ impl Piece {
 				}
 				// en passant captures
 				for side in [Vec2(-1, 0), Vec2(1, 0)] {
+					let to = pos + side + dir;
+					if !to.is_inside_board() {
+						continue;
+					}
 					match &board.get_tile(pos + side).piece {
 						Some(Piece {
 							piece_type:
@@ -184,19 +190,24 @@ impl Piece {
 								moves.push(Move {
 									move_type: MoveType::SlidingMove,
 									from: pos,
-									to: pos + side + dir,
+									to,
 								})
 							}
 						}
 						_ => {}
 					}
 				}
-				return moves;
+				moves
 			}
-		}
-		.into_iter()
-		.filter(|m| !m.would_cause_lose(board))
-		.collect();
+		};
+		return if deep {
+			moves
+				.into_iter()
+				.filter(|m| !m.would_cause_lose(board))
+				.collect()
+		} else {
+			moves
+		};
 	}
 	pub fn post_turn(&mut self) {
 		match &mut self.piece_type {

@@ -49,12 +49,13 @@ impl Game {
 		self.started = true;
 		self.board = Some(Board::new(self.players[0], self.players[1]));
 		if let Some(broadcast) = broadcast_manager.get_sender(self.id).await {
-			let _ = broadcast.send(PlayResponse::Start {
+			let board = self.board.as_mut().expect("just set the board");
+			board.generate_moves(true);
+			let turn_message = board.turn_message();
+			let _ = broadcast.send(PlayResponse::GameState {
 				state: self.get_game_state(),
 			});
-			let board = self.board.as_mut().expect("just set the board");
-			board.generate_moves();
-			let _ = broadcast.send(board.turn_message());
+			let _ = broadcast.send(turn_message);
 		}
 	}
 	pub fn get_game_state(&self) -> GameState {
