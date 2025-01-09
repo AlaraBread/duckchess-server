@@ -53,6 +53,7 @@ pub struct Move {
 pub enum MoveType {
 	JumpingMove,
 	SlidingMove,
+	EnPassant,
 }
 
 impl Move {
@@ -127,17 +128,31 @@ impl Board {
 impl Board {
 	pub fn execute_move(&mut self, piece_idx: usize, move_idx: usize) -> Option<PlayResponse> {
 		let mov = self.moves.get(piece_idx)?.get(move_idx)?.clone();
-		self.do_move(&mov);
+		let output_moves = self.do_move(&mov);
 		self.post_turn();
-		return Some(PlayResponse::Move { m: mov });
+		return Some(PlayResponse::Move {
+			moves: output_moves,
+		});
 	}
-	fn do_move(&mut self, mov: &Move) {
+	fn do_move(&mut self, mov: &Move) -> Vec<Move> {
 		let start = mov.from;
 		let end = mov.to;
 		if start == end {
-			return;
+			return Vec::new();
 		}
+		let mut output_moves = vec![mov.clone()];
 		let mut piece = self.get_tile(start).piece.clone();
+		match mov.move_type {
+			MoveType::EnPassant => output_moves.insert(
+				0,
+				Move {
+					move_type: MoveType::JumpingMove,
+					from: Vec2(mov.to.0, mov.from.1),
+					to: mov.to,
+				},
+			),
+			_ => {}
+		}
 		match &mut piece {
 			Some(Piece {
 				piece_type: PieceType::Pawn {
@@ -168,6 +183,7 @@ impl Board {
 		if start != end {
 			self.get_tile_mut(start).piece = Default::default();
 		}
+		return output_moves;
 	}
 	fn post_turn(&mut self) {
 		for y in 0..8 {

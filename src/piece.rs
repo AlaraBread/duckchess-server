@@ -188,7 +188,7 @@ impl Piece {
 						}) => {
 							if *owner != self.owner {
 								moves.push(Move {
-									move_type: MoveType::SlidingMove,
+									move_type: MoveType::EnPassant,
 									from: pos,
 									to,
 								})

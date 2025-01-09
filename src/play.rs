@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use rocket::{
 	fairing::AdHoc,
@@ -10,6 +10,7 @@ use rocket::{
 	tokio::{
 		self,
 		sync::broadcast::{error::RecvError, Sender},
+		task, time,
 	},
 	Responder, Shutdown, State,
 };
@@ -20,7 +21,7 @@ use crate::{
 	board::{Board, Move, Player},
 	broadcast_manager::BroadcastManager,
 	game::Game,
-	game_manager::GameManager,
+	game_manager::{self, GameManager},
 	player_manager::PlayerManager,
 	vec2::Vec2,
 };
@@ -143,7 +144,15 @@ async fn play(
 									Some(s) => s,
 									None => continue,
 								};
-								handle_play_request(player_id, game_id, game_manager.clone(), &text, &mut socket, &broadcast).await;
+								handle_play_request(
+									player_id,
+									game_id,
+									game_manager.clone(),
+									broadcast_manager.clone(),
+									&text,
+									&mut socket,
+									&broadcast
+								).await;
 							}
 							ws::Message::Close(_) => {
 								close_message = "client disconnected";
@@ -245,7 +254,10 @@ pub enum PlayResponse {
 		moves: Vec<Vec<Vec2>>,
 	},
 	Move {
-		m: Move,
+		moves: Vec<Move>,
+	},
+	End {
+		winner: Option<Player>,
 	},
 	ChatMessage {
 		id: u64,
@@ -257,6 +269,7 @@ async fn handle_play_request(
 	player_id: u64,
 	game_id: u64,
 	game_manager: Arc<GameManager>,
+	broadcast_manager: Arc<BroadcastManager>,
 	text: &str,
 	socket: &mut DuplexStream,
 	broadcast: &Sender<PlayResponse>,
@@ -294,7 +307,24 @@ async fn handle_play_request(
 			if let Some(move_response) = move_response {
 				let _ = broadcast.send(move_response);
 				board.generate_moves(true);
-				let _ = broadcast.send(board.turn_message());
+				if board.move_pieces.len() > 0 {
+					let _ = broadcast.send(board.turn_message());
+				} else {
+					let _ = broadcast.send(PlayResponse::End {
+						winner: Some(!board.turn),
+					});
+					let _ = broadcast.send(PlayResponse::ChatMessage {
+						id: 0,
+						message: "this game will close in 1 minute".to_string(),
+					});
+					let game_manager = game_manager.clone();
+					task::spawn(async move {
+						time::sleep(Duration::from_secs(60)).await;
+						let mut games = game_manager.games.lock().await;
+						games.remove(&game_id);
+						broadcast_manager.remove(game_id).await;
+					});
+				}
 			} else {
 				let _ = socket
 					.send(ws::Message::text(
@@ -346,9 +376,11 @@ async fn send_game_state(
 		))
 		.await;
 	if let Some(board) = &game.board {
-		let _ = socket.send(ws::Message::text(
-			serde_json::to_string(&board.turn_message()).unwrap(),
-		));
+		let _ = socket
+			.send(ws::Message::text(
+				serde_json::to_string(&board.turn_message()).unwrap(),
+			))
+			.await;
 	}
 }
 
