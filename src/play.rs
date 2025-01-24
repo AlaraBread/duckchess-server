@@ -21,7 +21,7 @@ use crate::{
 	board::{Board, Move, Player},
 	broadcast_manager::BroadcastManager,
 	game::Game,
-	game_manager::{self, GameManager},
+	game_manager::GameManager,
 	player_manager::PlayerManager,
 	vec2::Vec2,
 };
@@ -251,7 +251,7 @@ pub enum PlayResponse {
 	TurnStart {
 		turn: Player,
 		move_pieces: Vec<Vec2>,
-		moves: Vec<Vec<Vec2>>,
+		moves: Vec<Vec<Move>>,
 	},
 	Move {
 		moves: Vec<Move>,
@@ -303,6 +303,8 @@ async fn handle_play_request(
 			if board.get_player_id() != player_id {
 				return;
 			}
+			// TODO: put some representation of the move that just happened in chat
+			// (for screen readers)
 			let move_response = board.execute_move(piece_idx, move_idx);
 			if let Some(move_response) = move_response {
 				let _ = broadcast.send(move_response);

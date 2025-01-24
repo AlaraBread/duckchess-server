@@ -51,7 +51,7 @@ impl Piece {
 					if blocking.owner != self.owner {
 						// capture
 						moves.push(Move {
-							move_type,
+							move_type: move_type.clone(),
 							from: pos,
 							to,
 						});
@@ -59,7 +59,7 @@ impl Piece {
 					break;
 				}
 				moves.push(Move {
-					move_type,
+					move_type: move_type.clone(),
 					from: pos,
 					to,
 				});
@@ -198,6 +198,33 @@ impl Piece {
 					}
 				}
 				moves
+					.into_iter()
+					.flat_map(|original_move| {
+						let final_rank = match self.owner {
+							Player::White => 0,
+							Player::Black => 7,
+						};
+						if original_move.to.1 == final_rank {
+							// promotion
+							let mut moves = Vec::with_capacity(4);
+							for into in [
+								PieceType::Queen,
+								PieceType::Knight,
+								PieceType::Bishop,
+								PieceType::Castle,
+							] {
+								moves.push(Move {
+									to: original_move.to,
+									from: original_move.from,
+									move_type: MoveType::Promotion { into },
+								});
+							}
+							moves
+						} else {
+							vec![original_move]
+						}
+					})
+					.collect()
 			}
 		};
 		return if deep {

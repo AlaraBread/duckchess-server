@@ -48,12 +48,18 @@ pub struct Move {
 	pub to: Vec2,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+	crate = "rocket::serde",
+	rename_all = "camelCase",
+	rename_all_fields = "camelCase",
+	tag = "type"
+)]
 pub enum MoveType {
 	JumpingMove,
 	SlidingMove,
 	EnPassant,
+	Promotion { into: PieceType },
 }
 
 impl Move {
@@ -103,11 +109,7 @@ impl Board {
 		PlayResponse::TurnStart {
 			turn: self.turn,
 			move_pieces: self.move_pieces.clone(),
-			moves: self
-				.moves
-				.iter()
-				.map(|moves| moves.iter().map(|m| m.to).collect())
-				.collect(),
+			moves: self.moves.clone(),
 		}
 	}
 	pub fn about_to_win(&mut self) -> bool {
@@ -135,13 +137,7 @@ impl Board {
 		});
 	}
 	fn do_move(&mut self, mov: &Move) -> Vec<Move> {
-		let start = mov.from;
-		let end = mov.to;
-		if start == end {
-			return Vec::new();
-		}
 		let mut output_moves = vec![mov.clone()];
-		let mut piece = self.get_tile(start).piece.clone();
 		match mov.move_type {
 			MoveType::EnPassant => output_moves.insert(
 				0,
@@ -153,35 +149,48 @@ impl Board {
 			),
 			_ => {}
 		}
-		match &mut piece {
-			Some(Piece {
-				piece_type: PieceType::Pawn {
-					turns_since_double_advance,
-				},
-				..
-			}) => {
-				if (start.1 - end.1).abs() > 1 {
-					*turns_since_double_advance = Some(0);
+		for mov in output_moves.iter() {
+			let start = mov.from;
+			let end = mov.to;
+			let mut piece = self.get_tile(start).piece.clone();
+			match &mut piece {
+				Some(Piece {
+					piece_type: PieceType::Pawn {
+						turns_since_double_advance,
+					},
+					..
+				}) => {
+					if (start.1 - end.1).abs() > 1 {
+						*turns_since_double_advance = Some(0);
+					}
 				}
+				Some(Piece {
+					piece_type: PieceType::King,
+					owner,
+					..
+				}) => {
+					self.kings[match owner {
+						Player::White => 0,
+						Player::Black => 1,
+					}] = end;
+				}
+				_ => {}
 			}
-			Some(Piece {
-				piece_type: PieceType::King,
-				owner,
-				..
-			}) => {
-				self.kings[match owner {
-					Player::White => 0,
-					Player::Black => 1,
-				}] = end;
+			if let Some(ref mut piece) = piece {
+				piece.has_moved = true;
 			}
-			_ => {}
-		}
-		if let Some(ref mut piece) = piece {
-			piece.has_moved = true;
-		}
-		self.get_tile_mut(end).piece = piece;
-		if start != end {
-			self.get_tile_mut(start).piece = Default::default();
+			match &mov.move_type {
+				MoveType::Promotion { into } => {
+					if let Some(ref mut piece) = piece {
+						piece.piece_type = into.clone();
+					}
+				}
+				_ => {}
+			}
+			self.get_tile_mut(end).piece = piece;
+			if start != end {
+				self.get_tile_mut(start).piece = Default::default();
+			}
 		}
 		return output_moves;
 	}
