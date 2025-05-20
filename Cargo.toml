@@ -1,0 +1,15 @@
+[package]
+name = "duckchess"
+version = "0.0.0"
+edition = "2021"
+description = ""
+
+[lib]
+crate-type = []
+path = "main.rs"
+
+[dependencies.movegen]
+path = "fluvio/packages/movegen/rust/movegen"
+
+[dependencies.duckchess-server]
+path = "gameserver"

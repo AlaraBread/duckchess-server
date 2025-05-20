@@ -1,0 +1,349 @@
+apiVersion: 0.5.0
+meta:
+  name: car-processing
+  version: 0.1.0
+  namespace: examples
+
+config:
+  converter: json
+  consumer:
+    default_starting_offset:
+      value: 0
+      position: End
+
+types:
+  car:
+    type: object
+    properties:
+      maker:
+        type: string
+      model:
+        type: string
+      color:
+        type: string
+      license:
+        type: string
+      location:
+        type: string
+      mph:
+        type: u32
+      timestamp:
+        type: string
+  maker:
+    type: object
+    properties:
+      maker:
+        type: string
+      country:
+        type: string
+      continent:
+        type: string
+  car-location:
+    type: object
+    properties:
+      car:
+        type: string
+      color:
+        type: string
+      location:
+        type: string
+  color:
+    type: object
+    properties:
+      color:
+        type: string
+      count:
+        type: u32
+  car-colors:
+    type: list
+    items:
+      type: color
+  license:
+    type: object
+    properties:
+      maker:
+        type: string
+      model:
+        type: string
+      license:
+        type: string
+  licenses:
+    type: list
+    items:
+      type: license
+  stolen-plate:
+    type: object
+    properties:
+      license:
+        type: string
+      owner:
+        type: string
+      violator:
+        type: string
+
+topics:
+  cars:
+    schema:
+      value:
+        type: car
+  makers:
+    schema:
+      value:
+        type: maker
+  speeding:
+    schema:
+      value:
+        type: car
+  saratoga:
+    schema:
+      value:
+        type: car-location
+  sunnyvale:
+    schema:
+      value:
+        type: car-location
+  car-colors:
+    schema:
+      value:
+        type: car-colors
+  licenses:
+    consumer:
+      default_starting_offset:
+        value: 0
+        position: Beginning
+    schema:
+      value:
+        type: licenses
+  violations:
+    schema:
+      value:
+        type: stolen-plate
+
+services:
+  # Call to an HTTP server to identify a car maker
+  lookup-maker:
+    sources:
+      - type: topic
+        id: cars
+
+    transforms:
+      - operator: map
+        dependencies:
+          - name: sdf-http
+            version: "0.4.2"
+          - name: serde_json
+            version: "1"
+        run: |
+          fn get_car_maker(car: Car) -> Result<Maker> {
+            let maker = car.maker.replace(" ", "%20");
+            let url = format!("https://demo-data.infinyon.com/api/maker/{maker}");
+            let response = sdf_http::get(url)?;
+            let m: Maker = serde_json::from_slice(response.as_slice())?;
+            Ok(m)
+          }
+
+    sinks:
+      - type: topic
+        id: makers
+
+  # Find speeding cars
+  speeding-cars:
+    sources:
+      - type: topic
+        id: cars
+
+    transforms:
+      - operator: filter
+        run: |
+          fn is_speeding(car: Car) -> Result<bool> {
+            Ok(car.mph > 45)
+          }
+
+    sinks:
+      - type: topic
+        id: speeding
+
+  # Split cars into 2 streams based on location
+  divide-by-location:
+    sources:
+      - type: topic
+        id: cars
+
+    transforms:
+      - operator: map
+        run: |
+          fn get_car_location(car: Car) -> Result<CarLocation> {
+            Ok(CarLocation {
+              car: format!("{} {}", car.maker, car.model),
+              color: car.color,
+              location: car.location,
+            })
+          }
+
+    sinks:
+      - type: topic
+        id: saratoga
+        transforms:
+          - operator: filter
+            run: |
+              fn is_saratoga(cl: CarLocation) -> Result<bool> {
+                Ok(cl.location == "Saratoga")
+              }
+      - type: topic
+        id: sunnyvale
+        transforms:
+          - operator: filter
+            run: |
+              fn is_sunnyvale(cl: CarLocation) -> Result<bool> {
+                Ok(cl.location == "Sunnyvale")
+              }
+
+  # Count cars by color
+  count-by-color:
+    sources:
+      - type: topic
+        id: sunnyvale
+
+    states:
+      count-by-color:
+        type: keyed-state
+        properties:
+          key:
+            type: string
+          value:
+            type: arrow-row
+            properties:
+              count:
+                type: u32
+
+    window:
+      tumbling:
+        duration: 30s
+
+      assign-timestamp:
+        run: |
+          fn assign_event_timestamp(_cl: CarLocation, event_time: i64) -> Result<i64> {
+            Ok(event_time)
+          }
+      partition:
+        assign-key:
+          run: |
+            fn key_by_color(cl: CarLocation) -> Result<String> {
+              Ok(cl.color)
+            }
+
+        update-state:
+          run: |
+            fn increment_color_count(_cl: CarLocation) -> Result<()> {
+              let mut cbc = count_by_color();
+              cbc.count += 1;
+              cbc.update()?;
+              Ok(())
+            }
+
+      flush:
+        run: |
+          fn get_car_color_count() -> Result<CarColors> {
+            let cc = sql(&format!("SELECT * FROM count_by_color"))?;
+            let rows = cc.rows()?;
+            let color_col = cc.key()?;
+            let count_col = cc.col("count")?;
+
+            let mut colors = vec![];
+            while rows.next() {
+              let color = rows.str(&color_col)?;
+              let count = rows.u32(&count_col)?;
+              colors.push(Color {color, count});
+            }
+            Ok(colors)
+          }
+
+    sinks:
+      - type: topic
+        id: car-colors
+
+  # Save license plates
+  save-license-plates:
+    sources:
+      - type: topic
+        id: licenses
+
+    states:
+      license-plates:
+        type: keyed-state
+        properties:
+          key:
+            type: string
+          value:
+            type: arrow-row
+            properties:
+              maker:
+                type: string
+              model:
+                type: string
+
+    transforms:
+      - operator: flat-map
+        run: |
+          fn split_licenses(licenses: Licenses) -> Result<Vec<License>> {
+            Ok(licenses)
+          }
+
+    partition:
+      assign-key:
+        run: |
+          fn get_license_plate(license: License) -> Result<String> {
+            Ok(license.license)
+          }
+
+      update-state:
+        run: |
+          fn add_license_plate(license: License) -> Result<()> {
+            let mut lp = license_plates();
+            lp.maker = license.maker;
+            lp.model = license.model;
+            lp.update()?;
+            Ok(())
+          }
+
+  # Check license plates
+  check-license-plates:
+    sources:
+      - type: topic
+        id: cars
+
+    states:
+      license-plates:
+        from: save-license-plates.license-plates
+
+    transforms:
+      - operator: filter-map
+        run: |
+          fn check_license_plate(car: Car) -> Result<Option<StolenPlate>> {
+            let lp = sql(&format!("select * from license_plates where _key = '{}'", car.license))?;
+            let rows = lp.rows()?;
+
+            let maker_col = lp.col("maker")?;
+            let model_col = lp.col("model")?;
+
+            if !rows.next() {
+              return Ok(None)
+            }
+            let maker = rows.str(&maker_col)?;
+            let model = rows.str(&model_col)?;
+
+            if maker != car.maker.as_str() || model != car.model.as_str() {
+              Ok(Some(
+                StolenPlate {
+                  license: car.license.clone(),
+                  owner: format!("{} {}", &car.maker, &car.model),
+                  violator: format!("{} {}", maker, model)
+                }
+              ))
+            } else {
+              Ok(None)
+            }
+          }
+    sinks:
+      - type: topic
+        id: violations

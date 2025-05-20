@@ -1,0 +1,11 @@
+[package]
+name = "duckchess-types"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+rocket = { version = "0.5.1", features = ["json"] }
+serde = "1.0.216"

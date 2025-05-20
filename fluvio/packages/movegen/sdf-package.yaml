@@ -1,0 +1,84 @@
+apiVersion: 0.5.0
+
+meta:
+  name: movegen
+  version: 0.1.0
+  namespace: duckchess
+
+topics:
+  turns:
+    schema:
+      value:
+        type: fl-turn
+  moves:
+    schema:
+      value:
+        type: fl-move
+
+types:
+  # frontend sends turns
+  fl-turn:
+    type: object
+    properties:
+      game-id:
+        type: u64
+      piece-idx:
+        type: u32
+      move-idx:
+        type: u32
+  # frontend recieves moves
+  fl-move:
+    # full type is complicated, so we keep it serialized
+    type: string
+
+states:
+  board-state:
+    type: keyed-state
+    properties:
+      key:
+        type: string
+      value:
+        type: arrow-row
+        properties:
+          board:
+            # sdf doesn't allow arbitrary types in arrow-row, so we need to keep it serialized in here
+            type: string
+
+functions:
+  turn-assign-key:
+    operator: assign-key
+    inputs:
+      - name: turn
+        type: fl-turn
+    output:
+      type: u64
+
+  run-move:
+    operator: update-state
+    states:
+      - name: board-state
+    inputs:
+      - name: move
+        type: fl-move
+    sinks:
+      - type: topic
+        id: moves
+  generate-moves:
+    operator: flat-map
+    states:
+      - name: board-state
+    inputs:
+      - name: turn
+        type: fl-turn
+    output:
+      type: fl-move
+  move-assign-key:
+    operator: assign-key
+    inputs:
+      - name: move
+        type: fl-move
+    output:
+      type: u64
+
+dev:
+  converter: raw
