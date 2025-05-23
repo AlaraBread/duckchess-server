@@ -1,0 +1,125 @@
+apiVersion: 0.5.0
+
+meta:
+  name: matchmaking
+  version: 0.1.0
+  namespace: duckchess
+
+topics:
+  matchmaking-requests:
+    schema:
+      value:
+        type: fl-matchmaking-request
+  matchmaking-responses:
+    schema:
+      value:
+        type: fl-matchmaking-response
+
+types:
+  fl-matchmaking-request:
+    type: enum
+    oneOf:
+      start-matchmaking:
+        type: start-matchmaking
+      cancel-matchmaking:
+        type: cancel-matchmaking
+      change-elo-range:
+        type: change-elo-range
+  start-matchmaking:
+    type: object
+    properties:
+      player-id:
+        type: u64
+      elo:
+        type: f32
+      elo-range:
+        type: f32
+      time-started:
+        type: u64
+  cancel-matchmaking:
+    type: object
+    properties:
+      player-id:
+        type: u64
+  change-elo-range:
+    type: object
+    properties:
+      player-id:
+        type: u64
+      elo-range:
+        type: f32
+  fl-matchmaking-response:
+    type: object
+    properties:
+      player-id:
+        type: u64
+      opponent-id:
+        type: u64
+
+states:
+  matchmaking-state:
+    type: keyed-state
+    properties:
+      key:
+        type: u64
+      value:
+        type: arrow-row
+        properties:
+          elo:
+            type: f32
+          elo-range:
+            type: f32
+          time-started:
+            type: u64
+  games-state:
+    type: keyed-state
+    properties:
+      key:
+        type: u64
+      value:
+        type: arrow-row
+        properties:
+          white-player-id:
+            type: u64
+          black-player-id:
+            type: u64
+
+functions:
+  matchmaking-request-assign-key:
+    operator: assign-key
+    inputs:
+      - name: matchmaking-request
+        type: fl-matchmaking-request
+    output:
+      type: u64
+  matchmaking-response-assign-key:
+    operator: assign-key
+    inputs:
+      - name: matchmaking-response
+        type: fl-matchmaking-response
+    output:
+      type: u64
+  matchmake:
+    operator: flat-map
+    inputs:
+      - name: matchmaking-request
+        type: fl-matchmaking-request
+    output:
+      type: fl-matchmaking-response
+  matchmaking-request-update:
+    operator: update-state
+    states:
+      - name: matchmaking-state
+    inputs:
+      - name: matchmaking-request
+        type: fl-matchmaking-request
+  matchmaking-response-update:
+    operator: update-state
+    states:
+      - name: matchmaking-state
+    inputs:
+      - name: matchmaking-response
+        type: fl-matchmaking-response
+
+dev:
+  converter: raw
