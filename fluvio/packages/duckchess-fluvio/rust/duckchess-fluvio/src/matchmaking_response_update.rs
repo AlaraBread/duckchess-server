@@ -1,6 +1,5 @@
-use crate::bindings::duckchess::matchmaking::types::FlMatchmakingResponse;
-#[allow(unused_imports)]
-use crate::bindings::duckchess::matchmaking::types::*;
+use crate::bindings::duckchess::duckchess_fluvio::types::FlMatchmakingResponse;
+use crate::bindings::duckchess::duckchess_fluvio::types::*;
 use sdfg::sdf;
 use sdfg::Result;
 #[sdf(
@@ -18,10 +17,10 @@ use sdfg::Result;
     ),
 )]
 pub(crate) fn matchmaking_response_update(
-	matchmaking_response: FlMatchmakingResponse,
+	_matchmaking_response: FlMatchmakingResponse,
 ) -> Result<()> {
-	let state = matchmaking_state();
 	// sdf doesn't currently allow deleting a row
+	// let state = matchmaking_state();
 	// state.delete();
 	Ok(())
 }

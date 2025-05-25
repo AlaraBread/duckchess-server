@@ -1,6 +1,6 @@
-use crate::bindings::duckchess::movegen::types::FlMove;
-use crate::bindings::duckchess::movegen::types::FlTurn;
-use crate::bindings::duckchess::movegen::types::*;
+use crate::bindings::duckchess::duckchess_fluvio::types::FlMove;
+use crate::bindings::duckchess::duckchess_fluvio::types::FlTurn;
+use crate::bindings::duckchess::duckchess_fluvio::types::*;
 use duckchess_types::Board;
 use rocket::serde::json::serde_json;
 use sdfg::anyhow;
@@ -17,8 +17,7 @@ use sdfg::Result;
 			self.resource.set(
 				&[("board".to_string(), Dvalue::String(self.board.clone())),
 				]
-			).map_err(|e|sdfg::anyhow::anyhow!("Failed to update row: {}", e))?;
-		},
+		).map_err(|e|sdfg::anyhow::anyhow!("Failed to update row: {}", e))?;},
 	),
 )]
 pub(crate) fn generate_moves(turn: FlTurn) -> Result<Vec<FlMove>> {

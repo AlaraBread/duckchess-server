@@ -81,11 +81,8 @@ pub struct Board {
 	pub white_player: u64,
 	pub black_player: u64,
 	pub board: [[Tile; 8]; 8],
-	#[serde(skip)]
 	pub kings: [Vec2; 2],
-	#[serde(skip)]
 	pub move_pieces: Vec<Vec2>,
-	#[serde(skip)]
 	pub moves: Vec<Vec<Move>>,
 }
 
@@ -262,19 +259,13 @@ impl Board {
 			.map(|i| {
 				(0..8)
 					.into_iter()
-					.map(|j| {
-						let p = DEFAULT_BOARD[i][j].clone();
-						if (i + j) % 2 == 0 {
-							Tile {
-								floor: Floor::Light,
-								piece: p,
-							}
+					.map(|j| Tile {
+						floor: if (i + j) % 2 == 0 {
+							Floor::Light
 						} else {
-							Tile {
-								floor: Floor::Dark,
-								piece: p,
-							}
-						}
+							Floor::Dark
+						},
+						piece: DEFAULT_BOARD[i][j].clone(),
 					})
 					.collect::<Vec<Tile>>()
 					.try_into()

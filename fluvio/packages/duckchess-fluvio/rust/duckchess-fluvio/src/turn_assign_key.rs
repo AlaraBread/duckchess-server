@@ -1,4 +1,4 @@
-use crate::bindings::duckchess::movegen::types::FlTurn;
+use crate::bindings::duckchess::duckchess_fluvio::types::FlTurn;
 use sdfg::sdf;
 use sdfg::Result;
 #[sdf(fn_name = "turn-assign-key")]

@@ -1,6 +1,5 @@
-use crate::bindings::duckchess::matchmaking::types::FlMatchmakingRequest;
-#[allow(unused_imports)]
-use crate::bindings::duckchess::matchmaking::types::*;
+use crate::bindings::duckchess::duckchess_fluvio::types::FlMatchmakingRequest;
+use crate::bindings::duckchess::duckchess_fluvio::types::*;
 use sdfg::sdf;
 use sdfg::Result;
 #[sdf(
@@ -20,7 +19,7 @@ use sdfg::Result;
 pub(crate) fn matchmaking_request_update(matchmaking_request: FlMatchmakingRequest) -> Result<()> {
 	let mut state = matchmaking_state();
 	match matchmaking_request {
-		FlMatchmakingRequest::CancelMatchmaking(cancel_matchmaking) => {
+		FlMatchmakingRequest::CancelMatchmaking(_cancel_matchmaking) => {
 			// sdf doesn't currently allow deleting a row
 			// state.delete();
 		}

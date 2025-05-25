@@ -1,5 +1,5 @@
 [package]
-name = "movegen"
+name = "duckchess-fluvio"
 version = "0.0.0"
 edition = "2021"
 description = ""
@@ -31,6 +31,7 @@ panic = "abort"
 
 
 [dependencies]
+rand = "0.9.1"
 sdfg = { version = "0.13.0", features = ["row", "state", "table"] }
 rocket = { version = "0.5.1", features = ["json"] }
 serde = "1.0.216"

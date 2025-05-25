@@ -692,9 +692,19 @@ dependencies = [
 name = "duckchess"
 version = "0.0.0"
 dependencies = [
+ "duckchess-fluvio",
  "duckchess-server",
- "matchmaking",
- "movegen",
+]
+
+[[package]]
+name = "duckchess-fluvio"
+version = "0.0.0"
+dependencies = [
+ "duckchess-types",
+ "rand 0.9.1",
+ "rocket",
+ "sdfg",
+ "serde",
 ]
 
 [[package]]
@@ -1484,14 +1494,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "matchmaking"
-version = "0.0.0"
-dependencies = [
- "sdfg",
- "serde",
-]
-
-[[package]]
 name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1530,16 +1532,6 @@ dependencies = [
  "libc",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "movegen"
-version = "0.0.0"
-dependencies = [
- "duckchess-types",
- "rocket",
- "sdfg",
- "serde",
 ]
 
 [[package]]

@@ -1,11 +1,11 @@
-use crate::bindings::duckchess::movegen::types::FlMove;
-use crate::bindings::duckchess::movegen::types::*;
+use crate::bindings::duckchess::duckchess_fluvio::types::FlMove;
+use crate::bindings::duckchess::duckchess_fluvio::types::*;
 use duckchess_types::Board;
 use duckchess_types::Move;
 use rocket::serde::json::serde_json;
-
-use sdfg::Result;
 use sdfg::sdf;
+use sdfg::Result;
+
 #[sdf(
     fn_name = "run-move",
     state = (

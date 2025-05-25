@@ -8,11 +8,8 @@ description = ""
 crate-type = []
 path = "main.rs"
 
-[dependencies.movegen]
-path = "fluvio/packages/movegen/rust/movegen"
-
-[dependencies.matchmaking]
-path = "fluvio/packages/matchmaking/rust/matchmaking"
+[dependencies.duckchess-fluvio]
+path = "fluvio/packages/duckchess-fluvio/rust/duckchess-fluvio"
 
 [dependencies.duckchess-server]
 path = "gameserver"

@@ -1,6 +1,4 @@
-use crate::bindings::duckchess::matchmaking::types::FlMatchmakingResponse;
-#[allow(unused_imports)]
-use crate::bindings::duckchess::matchmaking::types::*;
+use crate::bindings::duckchess::duckchess_fluvio::types::FlMatchmakingResponse;
 use sdfg::sdf;
 use sdfg::Result;
 #[sdf(fn_name = "matchmaking-response-assign-key")]

@@ -1,15 +1,13 @@
-use crate::bindings::duckchess::matchmaking::types::FlMatchmakingRequest;
-use crate::bindings::duckchess::matchmaking::types::FlMatchmakingResponse;
-#[allow(unused_imports)]
-use crate::bindings::duckchess::matchmaking::types::*;
-use sdfg::Result;
+use crate::bindings::duckchess::duckchess_fluvio::types::FlMatchmakingRequest;
+use crate::bindings::duckchess::duckchess_fluvio::types::FlMatchmakingResponse;
 use sdfg::sdf;
+use sdfg::Result;
 #[sdf(fn_name = "matchmake")]
 pub(crate) fn matchmake(
 	matchmaking_request: FlMatchmakingRequest,
 ) -> Result<Vec<FlMatchmakingResponse>> {
 	let (player_id, elo, elo_range) = match matchmaking_request {
-		FlMatchmakingRequest::CancelMatchmaking(cancel_matchmaking) => return Ok(vec![]),
+		FlMatchmakingRequest::CancelMatchmaking(_cancel_matchmaking) => return Ok(vec![]),
 		FlMatchmakingRequest::ChangeEloRange(change_elo_range) => (
 			change_elo_range.player_id,
 			{
