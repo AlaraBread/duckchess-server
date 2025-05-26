@@ -190,12 +190,6 @@ functions:
     operator: update-state
     states:
       - name: matchmaking-state
-    inputs:
-      - name: matchmaking-response
-        type: fl-matchmaking-response
-  matchmaking-response-update-games:
-    operator: update-state
-    states:
       - name: board-state
     inputs:
       - name: matchmaking-response
