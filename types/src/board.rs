@@ -62,6 +62,7 @@ pub enum MoveType {
 	EnPassant,
 	Promotion { into: PieceType },
 	TurnEnd,
+	GameOver { winner: Player },
 }
 
 impl Move {

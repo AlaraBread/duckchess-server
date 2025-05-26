@@ -41,7 +41,7 @@ pub(crate) fn generate_moves(turn: FlTurn) -> Result<Vec<FlMove>> {
 		moves
 			.into_iter()
 			.map(|m| serde_json::to_string(&m))
-			.collect::<Result<Vec<String>, _>>()
+			.collect::<Result<Vec<FlMove>, _>>()
 			.map_err(|_| anyhow::anyhow!("invalid move"))
 	} else {
 		Err(anyhow::anyhow!("invalid turn"))
