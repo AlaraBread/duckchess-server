@@ -135,7 +135,7 @@ functions:
         type: fl-turn
     output:
       type: fl-move
-  turn-update-board:
+  generate-responses:
     operator: update-state
     states:
       - name: board-state
