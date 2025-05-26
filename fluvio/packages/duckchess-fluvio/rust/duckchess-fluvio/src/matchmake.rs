@@ -36,10 +36,12 @@ pub(crate) fn matchmake(
 		FlMatchmakingResponse {
 			player_id,
 			opponent_id,
+			existing: false,
 		},
 		FlMatchmakingResponse {
 			player_id: opponent_id,
 			opponent_id: player_id,
+			existing: false,
 		},
 	])
 }

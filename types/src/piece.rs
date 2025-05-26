@@ -35,7 +35,6 @@ pub struct Piece {
 impl Piece {
 	fn generate_simple_moves(
 		&self,
-		game_id: u64,
 		offsets: &[Vec2],
 		limit: i8,
 		pos: Vec2,
@@ -52,7 +51,7 @@ impl Piece {
 					if blocking.owner != self.owner {
 						// capture
 						moves.push(Move {
-							game_id,
+							game_id: board.id,
 							move_type: move_type.clone(),
 							from: pos,
 							to,
@@ -61,7 +60,7 @@ impl Piece {
 					break;
 				}
 				moves.push(Move {
-					game_id,
+					game_id: board.id,
 					move_type: move_type.clone(),
 					from: pos,
 					to,
@@ -72,13 +71,12 @@ impl Piece {
 		}
 		return moves;
 	}
-	pub fn generate_moves(&self, game_id: u64, board: &Board, pos: Vec2, deep: bool) -> Vec<Move> {
+	pub fn generate_moves(&self, board: &Board, pos: Vec2, deep: bool) -> Vec<Move> {
 		if self.owner != board.turn {
 			return vec![];
 		}
 		let moves = match self.piece_type {
 			PieceType::King => self.generate_simple_moves(
-				game_id,
 				&[
 					Vec2(0, 1),
 					Vec2(0, -1),
@@ -95,7 +93,6 @@ impl Piece {
 				board,
 			),
 			PieceType::Queen => self.generate_simple_moves(
-				game_id,
 				&[
 					Vec2(0, 1),
 					Vec2(0, -1),
@@ -112,7 +109,6 @@ impl Piece {
 				board,
 			),
 			PieceType::Castle => self.generate_simple_moves(
-				game_id,
 				&[Vec2(0, 1), Vec2(0, -1), Vec2(1, 0), Vec2(-1, 0)],
 				i8::MAX,
 				pos,
@@ -120,7 +116,6 @@ impl Piece {
 				board,
 			),
 			PieceType::Bishop => self.generate_simple_moves(
-				game_id,
 				&[Vec2(-1, -1), Vec2(-1, 1), Vec2(1, -1), Vec2(1, 1)],
 				i8::MAX,
 				pos,
@@ -128,7 +123,6 @@ impl Piece {
 				board,
 			),
 			PieceType::Knight => self.generate_simple_moves(
-				game_id,
 				&[
 					Vec2(2, 1),
 					Vec2(2, -1),
@@ -158,7 +152,7 @@ impl Piece {
 						break;
 					}
 					moves.push(Move {
-						game_id,
+						game_id: board.id,
 						move_type: MoveType::SlidingMove,
 						from: pos,
 						to,
@@ -173,7 +167,7 @@ impl Piece {
 					if let Some(piece) = &board.get_tile(to).piece {
 						if piece.owner != self.owner {
 							moves.push(Move {
-								game_id,
+								game_id: board.id,
 								move_type: MoveType::SlidingMove,
 								from: pos,
 								to,
@@ -198,7 +192,7 @@ impl Piece {
 						}) => {
 							if *owner != self.owner {
 								moves.push(Move {
-									game_id,
+									game_id: board.id,
 									move_type: MoveType::EnPassant,
 									from: pos,
 									to,
@@ -225,7 +219,7 @@ impl Piece {
 								PieceType::Castle,
 							] {
 								moves.push(Move {
-									game_id,
+									game_id: board.id,
 									to: original_move.to,
 									from: original_move.from,
 									move_type: MoveType::Promotion { into },

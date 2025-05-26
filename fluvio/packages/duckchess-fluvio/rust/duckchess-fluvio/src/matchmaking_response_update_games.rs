@@ -27,6 +27,9 @@ pub(crate) fn matchmaking_response_update_games(
 		// so we arbitrarily pick one from the pair
 		return Ok(());
 	}
+	if matchmaking_response.existing {
+		return Ok(());
+	}
 	let mut board_state = board_state();
 	let (white, black) = if rand::rng().random() {
 		(
@@ -39,7 +42,8 @@ pub(crate) fn matchmaking_response_update_games(
 			matchmaking_response.player_id,
 		)
 	};
-	let board = Board::new(white, black);
+	// using white's player id as the game id for now
+	let board = Board::new(white, black, white);
 	board_state.board = serde_json::to_string(&board)?;
 	board_state.update()?;
 	Ok(())

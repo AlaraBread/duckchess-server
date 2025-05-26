@@ -77,6 +77,7 @@ impl Move {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub struct Board {
+	pub id: u64,
 	pub turn: Player,
 	pub white_player: u64,
 	pub black_player: u64,
@@ -88,14 +89,14 @@ pub struct Board {
 
 // movegen
 impl Board {
-	pub fn generate_moves(&mut self, game_id: u64, deep: bool) {
+	pub fn generate_moves(&mut self, deep: bool) {
 		self.move_pieces = Vec::new();
 		self.moves = Vec::new();
 		for y in 0..8 {
 			for x in 0..8 {
 				let p = Vec2(x, y);
 				if let Some(piece) = &self.get_tile(p).piece {
-					let moves = piece.generate_moves(game_id, self, p, deep);
+					let moves = piece.generate_moves(self, p, deep);
 					if moves.len() > 0 {
 						self.moves.push(moves);
 						self.move_pieces.push(p);
@@ -112,7 +113,7 @@ impl Board {
 		}
 	}
 	pub fn about_to_win(&mut self) -> bool {
-		self.generate_moves(0, false);
+		self.generate_moves(false);
 		self.moves
 			.iter()
 			.find(|moves| {
@@ -150,8 +151,8 @@ impl Board {
 		output_moves.push(Move {
 			game_id,
 			move_type: MoveType::TurnEnd,
-			from: Vec2(0, 0),
-			to: Vec2(0, 0),
+			from: Vec2(-1, -1),
+			to: Vec2(-1, -1),
 		});
 		return Some(output_moves);
 	}
@@ -253,7 +254,7 @@ impl Board {
 	pub fn get_tile_mut(&mut self, pos: Vec2) -> &mut Tile {
 		&mut self.board[pos.1 as usize][pos.0 as usize]
 	}
-	pub fn new(white_player: u64, black_player: u64) -> Self {
+	pub fn new(white_player: u64, black_player: u64, game_id: u64) -> Self {
 		let board = (0..8)
 			.into_iter()
 			.map(|i| {
@@ -274,7 +275,7 @@ impl Board {
 			.collect::<Vec<[Tile; 8]>>()
 			.try_into()
 			.unwrap();
-		Self {
+		let mut board = Self {
 			turn: Player::White,
 			white_player,
 			black_player,
@@ -284,8 +285,11 @@ impl Board {
 				Self::find_king_position(&board, Player::White),
 				Self::find_king_position(&board, Player::Black),
 			],
+			id: game_id,
 			board,
-		}
+		};
+		board.generate_moves(true);
+		board
 	}
 }
 

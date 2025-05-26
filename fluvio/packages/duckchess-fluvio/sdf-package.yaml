@@ -77,6 +77,8 @@ types:
         type: u64
       opponent-id:
         type: u64
+      existing:
+        type: bool
 
 states:
   board-state:
@@ -133,6 +135,13 @@ functions:
         type: fl-turn
     output:
       type: fl-move
+  turn-update-board:
+    operator: update-state
+    states:
+      - name: board-state
+    inputs:
+      - name: turn
+        type: fl-turn
   move-assign-key:
     operator: assign-key
     inputs:
