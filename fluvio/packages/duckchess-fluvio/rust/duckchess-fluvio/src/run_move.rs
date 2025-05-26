@@ -4,8 +4,8 @@ use duckchess_types::Board;
 use duckchess_types::Move;
 use duckchess_types::MoveType;
 use rocket::serde::json::serde_json;
-use sdfg::sdf;
 use sdfg::Result;
+use sdfg::sdf;
 
 #[sdf(
     fn_name = "run-move",

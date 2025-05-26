@@ -142,6 +142,15 @@ functions:
     inputs:
       - name: turn
         type: fl-turn
+  check-for-game-over:
+    operator: flat-map
+    states:
+      - name: board-state
+    inputs:
+      - name: turn
+        type: fl-turn
+    output:
+      type: fl-move
   move-assign-key:
     operator: assign-key
     inputs:

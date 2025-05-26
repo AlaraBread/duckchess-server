@@ -3,10 +3,10 @@ use crate::bindings::duckchess::duckchess_fluvio::types::FlTurn;
 use crate::bindings::duckchess::duckchess_fluvio::types::*;
 use duckchess_types::Board;
 use rocket::serde::json::serde_json;
+use sdfg::Result;
 use sdfg::anyhow;
 use sdfg::context_guest::wit::utils::sql;
 use sdfg::sdf;
-use sdfg::Result;
 #[sdf(
 	fn_name = "generate-moves",
 	state = (
@@ -28,11 +28,10 @@ pub(crate) fn generate_moves(turn: FlTurn) -> Result<Vec<FlMove>> {
 		turn.game_id
 	))?;
 	let rows = board_df.rows()?;
-	let board_col = board_df.col("board")?;
 	if !rows.next() {
 		return Err(anyhow::anyhow!("non existent board"));
 	}
-	let board = serde_json::from_str::<Board>(&rows.str(&board_col)?)?;
+	let board = serde_json::from_str::<Board>(&rows.str(&board_df.col("board")?)?)?;
 	if let Some(moves) = board.evaluate_turn(
 		turn.game_id,
 		turn.piece_idx as usize,
