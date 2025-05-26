@@ -1,7 +1,10 @@
 use crate::bindings::duckchess::duckchess_fluvio::types::FlMatchmakingRequest;
 use crate::bindings::duckchess::duckchess_fluvio::types::FlMatchmakingResponse;
-use sdfg::sdf;
+use duckchess_types::Board;
+use rocket::serde::json::serde_json;
 use sdfg::Result;
+use sdfg::sdf;
+
 #[sdf(fn_name = "matchmake")]
 pub(crate) fn matchmake(
 	matchmaking_request: FlMatchmakingRequest,
@@ -25,6 +28,24 @@ pub(crate) fn matchmake(
 			start_matchmaking.elo_range,
 		),
 	};
+	let existing_game = sql(&format!(
+		"SELECT * FROM board_state WHERE _key = {} LIMIT 1",
+		player_id
+	))?;
+	let existing_game_rows = existing_game.rows()?;
+	if existing_game_rows.next() {
+		let board =
+			serde_json::from_str::<Board>(&existing_game_rows.str(&existing_game.col("board")?)?)?;
+		return Ok(vec![FlMatchmakingResponse {
+			player_id: player_id,
+			opponent_id: if board.white_player == player_id {
+				board.black_player
+			} else {
+				board.white_player
+			},
+			existing: true,
+		}]);
+	}
 	let matches = sql(&format!(
 		"SELECT * FROM matchmaking_state WHERE elo >= {} AND elo <= {} and _key != {} ORDER BY time_started DESC LIMIT 1",
 		elo - elo_range,
