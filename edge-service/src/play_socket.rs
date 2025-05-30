@@ -127,8 +127,9 @@ impl PlaySocket {
 			// forfeit the game (game service handles game cleanup)
 			let _: () = self
 				.redis
-				.xadd(
+				.xadd_maxlen(
 					"game_requests",
+					redis::streams::StreamMaxlen::Approx(10000),
 					"*",
 					&[(
 						"forfeit",
@@ -227,8 +228,9 @@ impl PlaySocket {
 			// let the other player know they just got matched
 			let _: () = self
 				.redis
-				.xadd(
+				.xadd_maxlen(
 					format!("matchmaking:{}", matched_player),
+					redis::streams::StreamMaxlen::Approx(1000),
 					"*",
 					&[("match", &game_id)],
 				)
@@ -240,8 +242,9 @@ impl PlaySocket {
 			};
 			let _: () = self
 				.redis
-				.xadd(
+				.xadd_maxlen(
 					"game_requests",
+					redis::streams::StreamMaxlen::Approx(10000),
 					"*",
 					&[(
 						"game_start",
@@ -359,8 +362,9 @@ impl PlaySocket {
 					}
 					let _: () = self
 						.redis
-						.xadd(
+						.xadd_maxlen(
 							"game_requests",
+							redis::streams::StreamMaxlen::Approx(10000),
 							"*",
 							&[(
 								"turn",
@@ -389,8 +393,9 @@ impl PlaySocket {
 						.expect("failed to serialize chat message");
 					let _: () = self
 						.redis
-						.xadd(
+						.xadd_maxlen(
 							format!("game:{}", &game_id),
+							redis::streams::StreamMaxlen::Approx(1000),
 							"*",
 							&[("chat", message.as_str())],
 						)

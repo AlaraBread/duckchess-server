@@ -150,8 +150,9 @@ async fn process_turn(con: &mut MultiplexedConnection, turn: &str) {
 		.await
 		.expect("failed to set board");
 	let _: String = con
-		.xadd(
+		.xadd_maxlen(
 			format!("game:{}", turn.game_id),
+			redis::streams::StreamMaxlen::Approx(1000),
 			"*",
 			&[("moves", serde_json::to_string(&computed_moves).unwrap())],
 		)
@@ -159,8 +160,9 @@ async fn process_turn(con: &mut MultiplexedConnection, turn: &str) {
 		.expect("Failed to write to moves stream");
 	if board.moves.is_empty() {
 		let _: () = con
-			.xadd(
+			.xadd_maxlen(
 				format!("game:{}", turn.game_id),
+				redis::streams::StreamMaxlen::Approx(1000),
 				"*",
 				&[("end", board.get_not_turn_player_id())],
 			)
@@ -187,8 +189,9 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 		.await
 		.expect("failed to set board");
 	let _: String = con
-		.xadd(
+		.xadd_maxlen(
 			format!("game:{}", &game_start.game_id),
+			redis::streams::StreamMaxlen::Approx(1000),
 			"*",
 			&[
 				("game_start", game_start_str),
@@ -215,8 +218,9 @@ async fn process_forfeit(con: &mut MultiplexedConnection, (game_id, player_id): 
 	};
 	let board: Board = serde_json::from_str(board_str.as_str()).expect("failed to parse board");
 	let _: () = con
-		.xadd(
+		.xadd_maxlen(
 			format!("game:{}", game_id),
+			redis::streams::StreamMaxlen::Approx(1000),
 			"*",
 			&[(
 				"end",
