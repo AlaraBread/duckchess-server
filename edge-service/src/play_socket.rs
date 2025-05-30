@@ -196,34 +196,37 @@ impl PlaySocket {
 				Ok(row) => row,
 				Err(_) => {
 					// no match
-					// add self to matchmaking_players
-					sqlx::query("DELETE FROM matchmaking_players WHERE id = $1")
-						.bind(&self.user_id)
-						.execute(&mut **self.db)
-						.await
-						.expect("postgres error");
-					sqlx::query(
-						"INSERT INTO matchmaking_players \
-						(id, elo, elo_range, start_time) \
-						VALUES ($1, $2, $3, $4)",
-					)
-					.bind(&self.user_id)
-					.bind(*elo)
-					.bind(*elo_range)
-					.bind(OffsetDateTime::now_utc())
-					.execute(&mut **self.db)
-					.await
-					.expect("postgres error");
+					Self::enter_matchmaking_queue(&self.user_id, &mut self.db, *elo, *elo_range)
+						.await;
 					return;
 				}
 			}
 			.get(0);
-			sqlx::query("DELETE FROM matchmaking_players WHERE id = $1 OR id = $2")
-				.bind(&matched_player)
-				.bind(&self.user_id)
-				.execute(&mut **self.db)
-				.await
-				.expect("postgres error");
+			let results = sqlx::query(
+				"DELETE FROM matchmaking_players WHERE id = $1 OR id = $2 RETURNING id",
+			)
+			.bind(&matched_player)
+			.bind(&self.user_id)
+			.fetch_all(&mut **self.db)
+			.await
+			.expect("postgres error");
+			if results.len() != 2 {
+				// concurrency issue:
+				if results
+					.iter()
+					.find(|row| row.get::<String, usize>(0) == self.user_id)
+					.is_some()
+				{
+					// we got matched with someone else and don't know yet
+					// dont need to do anything here
+				} else {
+					// the person we matched with has already been matched with someone else
+					// we should re-enter the matchmaking queue
+					Self::enter_matchmaking_queue(&self.user_id, &mut self.db, *elo, *elo_range)
+						.await;
+				}
+				return;
+			}
 			let game_id = Uuid::new_v7(Timestamp::now(NoContext)).to_string();
 			// let the other player know they just got matched
 			let _: () = self
@@ -260,6 +263,30 @@ impl PlaySocket {
 				.expect("redis error");
 			self.matched(game_id).await;
 		}
+	}
+	async fn enter_matchmaking_queue(
+		user_id: &str,
+		db: &mut Connection<PostgresPool>,
+		elo: f32,
+		elo_range: f32,
+	) {
+		sqlx::query("DELETE FROM matchmaking_players WHERE id = $1")
+			.bind(&user_id)
+			.execute(&mut ***db)
+			.await
+			.expect("postgres error");
+		sqlx::query(
+			"INSERT INTO matchmaking_players \
+						(id, elo, elo_range, start_time) \
+						VALUES ($1, $2, $3, $4)",
+		)
+		.bind(&user_id)
+		.bind(elo)
+		.bind(elo_range)
+		.bind(OffsetDateTime::now_utc())
+		.execute(&mut ***db)
+		.await
+		.expect("postgres error");
 	}
 	pub async fn expand_elo_range(&mut self) {
 		if let PlaySocketState::Matchmaking { elo_range, .. } = &mut self.state {
