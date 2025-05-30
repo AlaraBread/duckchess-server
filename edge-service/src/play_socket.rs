@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use duckchess_common::{
 	Board, ChatMessage, GameStart, Move, PlayRequest, PlayResponse, Turn, TurnStart,
 };
@@ -6,6 +8,7 @@ use redis::AsyncCommands;
 
 use rocket::serde::json::serde_json;
 use rocket::time::OffsetDateTime;
+use rocket::tokio;
 use rocket::{
 	futures::SinkExt,
 	serde::{Deserialize, Serialize},
@@ -15,6 +18,7 @@ use rocket_db_pools::{Connection, sqlx};
 use uuid::{NoContext, Timestamp, Uuid};
 use ws::stream::DuplexStream;
 
+use crate::util::close_socket;
 use crate::{PostgresPool, RedisPool};
 pub struct PlaySocket {
 	pub user_id: String,
@@ -44,7 +48,7 @@ impl PlaySocket {
 			.map(|s| serde_json::from_str(&s).ok())
 			.ok()
 			.flatten();
-		let state = match cached_state {
+		let mut state = match cached_state {
 			Some(state) => Self {
 				user_id,
 				state,
@@ -77,7 +81,87 @@ impl PlaySocket {
 				state
 			}
 		};
+		let _: i64 = state
+			.redis
+			.incr(format!("user_socket_count:{}", &state.user_id), 1)
+			.await
+			.expect("redis error");
 		Ok(state)
+	}
+	pub async fn disconnected(mut self: Self, close_message: &str, allow_reconnect: bool) {
+		close_socket(&mut self.socket, close_message.to_string()).await;
+		let _: i64 = self
+			.redis
+			.decr(format!("user_socket_count:{}", &self.user_id), 1)
+			.await
+			.expect("redis error");
+		if allow_reconnect {
+			tokio::spawn(async move {
+				let disconnect_snowflake = self.set_disconnect_snowflake().await;
+				tokio::time::sleep(Duration::from_secs(60)).await;
+				// if the snowflake changed during the sleep, someone else joined and left while we were sleeping
+				// we will let that socket handle the cleanup
+				let snowflake_match = self.get_disconnect_snowflake().await == disconnect_snowflake;
+				// if another socket still exists for this player, we shouldn't cleanup
+				let current_socket_count = self
+					.redis
+					.get::<String, i64>(format!("user_socket_count:{}", &self.user_id))
+					.await
+					.expect("redis error");
+				if current_socket_count <= 0 && snowflake_match {
+					// cleanup
+					self.cleanup().await;
+				}
+			});
+		} else {
+			self.cleanup().await;
+		}
+	}
+	async fn cleanup(&mut self) {
+		sqlx::query("DELETE FROM matchmaking_players WHERE id = $1")
+			.bind(&self.user_id)
+			.execute(&mut **self.db)
+			.await
+			.expect("postgres error");
+		if let PlaySocketState::Game { game_id, .. } = &self.state {
+			// forfeit the game (game service handles game cleanup)
+			let _: () = self
+				.redis
+				.xadd(
+					"game_requests",
+					"*",
+					&[("forfeit", (&game_id, &self.user_id))],
+				)
+				.await
+				.expect("redis error");
+		}
+		let _: usize = self
+			.redis
+			.del(&[
+				format!("socket_state:{}", &self.user_id),
+				format!("matchmaking:{}", &self.user_id),
+				format!("user_socket_count:{}", &self.user_id),
+			])
+			.await
+			.expect("redis error");
+	}
+	async fn set_disconnect_snowflake(&mut self) -> String {
+		let disconnect_snowflake = Uuid::new_v7(Timestamp::now(NoContext)).to_string();
+		let _: () = self
+			.redis
+			.set(
+				format!("disconnect_snowflake:{}", &self.user_id),
+				&disconnect_snowflake,
+			)
+			.await
+			.expect("redis error");
+		return disconnect_snowflake;
+	}
+	async fn get_disconnect_snowflake(&mut self) -> String {
+		self.redis
+			.get::<String, String>(format!("disconnect_snowflake:{}", &self.user_id))
+			.await
+			.expect("redis error")
 	}
 	pub async fn save_state(&mut self) {
 		let state = serde_json::to_string(&self.state).expect("couldnt serialize state");
@@ -227,6 +311,15 @@ impl PlaySocket {
 					message: chat_message,
 				})
 				.expect("failed to serialize chat message"),
+			))
+			.await;
+	}
+	pub async fn game_end(&mut self, winner: String) {
+		let _ = self
+			.socket
+			.send(ws::Message::Text(
+				serde_json::to_string(&PlayResponse::End { winner })
+					.expect("failed to serialize game end"),
 			))
 			.await;
 	}

@@ -215,10 +215,16 @@ impl Board {
 }
 
 impl Board {
-	pub fn get_player_id(&self) -> &str {
+	pub fn get_turn_player_id(&self) -> &str {
 		match self.turn {
 			Player::White => &self.white_player,
 			Player::Black => &self.black_player,
+		}
+	}
+	pub fn get_not_turn_player_id(&self) -> &str {
+		match self.turn {
+			Player::White => &self.black_player,
+			Player::Black => &self.white_player,
 		}
 	}
 	fn find_king_position(board: &[[Tile; 8]; 8], player: Player) -> Vec2 {

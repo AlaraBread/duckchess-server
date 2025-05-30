@@ -40,7 +40,7 @@ pub enum PlayResponse {
 		moves: Vec<Move>,
 	},
 	End {
-		winner: Option<String>,
+		winner: String,
 	},
 	ChatMessage {
 		message: ChatMessage,

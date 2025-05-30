@@ -134,6 +134,9 @@ async fn process_stream_id(con: &mut MultiplexedConnection, stream_id: &StreamId
 	if let Some(turn) = stream_id.get::<String>("turn") {
 		process_turn(con, turn.as_str()).await;
 	}
+	if let Some(forfeit) = stream_id.get::<(String, String)>("forfeit") {
+		process_forfeit(con, forfeit).await;
+	}
 }
 
 async fn process_turn(con: &mut MultiplexedConnection, turn: &str) {
@@ -142,6 +145,7 @@ async fn process_turn(con: &mut MultiplexedConnection, turn: &str) {
 	let board_str: String = con.get(&board_key).await.expect("failed to get board");
 	let mut board: Board = serde_json::from_str(board_str.as_str()).expect("failed to parse board");
 	let computed_moves = board.evaluate_turn(&turn).unwrap();
+	board.generate_moves(true);
 	let _: () = con
 		.set(&board_key, serde_json::to_string(&board).unwrap())
 		.await
@@ -154,6 +158,17 @@ async fn process_turn(con: &mut MultiplexedConnection, turn: &str) {
 		)
 		.await
 		.expect("Failed to write to moves stream");
+	if board.moves.is_empty() {
+		let _: () = con
+			.xadd(
+				format!("game:{}", turn.game_id),
+				"*",
+				&[("end", board.get_not_turn_player_id())],
+			)
+			.await
+			.expect("failed to write to game stream");
+		cleanup_game(con, &turn.game_id).await;
+	}
 }
 
 async fn process_game_start(con: &mut MultiplexedConnection, game_start: &str) {
@@ -188,4 +203,37 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start: &str) {
 		)
 		.await
 		.expect("failed to write to game stream");
+}
+
+async fn process_forfeit(con: &mut MultiplexedConnection, (game_id, player_id): (String, String)) {
+	let board_key = format!("board:{}", game_id);
+	let board_str: String = con.get(&board_key).await.expect("failed to get board");
+	let board: Board = serde_json::from_str(board_str.as_str()).expect("failed to parse board");
+	let _: () = con
+		.xadd(
+			format!("game:{}", game_id),
+			"*",
+			&[(
+				"end",
+				if player_id == board.white_player {
+					board.black_player
+				} else {
+					board.white_player
+				},
+			)],
+		)
+		.await
+		.expect("failed to write to game stream");
+	cleanup_game(con, &game_id).await;
+}
+
+async fn cleanup_game(con: &mut MultiplexedConnection, game_id: &str) {
+	let _: () = con
+		.del(&[
+			format!("board:{}", game_id),
+			format!("game:{}", game_id),
+			format!("chat:{}", game_id),
+		])
+		.await
+		.expect("failed to delete board");
 }

@@ -50,7 +50,8 @@ async fn play(
 			let mut matchmaking_redis = socket_state.redis.clone();
 			let mut game_redis = socket_state.redis.clone();
 			let close_message;
-			loop {
+			let allow_reconnect;
+			'main_loop: loop {
 				let matchmaking_stream: RedisFuture<StreamReadReply> = matchmaking_redis
 					.xread_options(matchmaking_stream_key, &[">"], &stream_options);
 				let game_stream_key;
@@ -69,6 +70,7 @@ async fn play(
 							}
 							ws::Message::Close(_) => {
 								close_message = "client disconnected";
+								allow_reconnect = true;
 								break;
 							}
 							_ => {}
@@ -97,23 +99,30 @@ async fn play(
 								if let Some(chat) = message.get::<String>("chat") {
 									socket_state.chat_recieved(chat).await;
 								}
+								if let Some(winner) = message.get::<String>("end") {
+									socket_state.game_end(winner).await;
+									close_message = "game ended";
+									allow_reconnect = false;
+									break 'main_loop;
+								}
 							}
 						}
 					}
 					_ = &mut end => {
 						close_message = "server closed";
+						allow_reconnect = true;
 						break;
 					}
 					else => {
 						close_message = "client disconnected";
+						allow_reconnect = true;
 						break;
 					}
 				}
 			}
-			// disconnected
-			// if we were the last listener for this player, send player left event
-			// wait a second and check if noone is in the game, then clean it up
-			close_socket(&mut socket_state.socket, close_message.to_string()).await;
+			socket_state
+				.disconnected(&close_message, allow_reconnect)
+				.await;
 			Ok(())
 		})
 	})
