@@ -34,7 +34,6 @@ async fn main() {
 		.xgroup_create_mkstream("game_requests", &consumer_group, "$")
 		.await;
 
-	let mut last_id: Option<String> = None;
 	loop {
 		// autoclaim unacked messages
 		let mut last_claimed_message: Option<String> = None;
@@ -66,13 +65,10 @@ async fn main() {
 		let StreamReadReply { keys } = con
 			.xread_options(
 				&["game_requests"],
-				&[match &last_id {
-					Some(id) => id.as_str(),
-					None => ">", // unprocessed turns
-				}],
+				&[">"],
 				&StreamReadOptions::default()
-					.count(1)
-					.block(0)
+					.count(100)
+					.block(1000)
 					.group(&consumer_group, "todo"),
 			)
 			.await
@@ -80,7 +76,6 @@ async fn main() {
 		for StreamKey { ids, .. } in keys.iter() {
 			for stream_id in ids.iter() {
 				process_stream_id(&mut con, stream_id).await;
-				last_id = Some(stream_id.id.clone());
 			}
 		}
 		ack_messages(
@@ -134,8 +129,12 @@ async fn process_stream_id(con: &mut MultiplexedConnection, stream_id: &StreamId
 	if let Some(turn) = stream_id.get::<String>("turn") {
 		process_turn(con, turn.as_str()).await;
 	}
-	if let Some(forfeit) = stream_id.get::<(String, String)>("forfeit") {
-		process_forfeit(con, forfeit).await;
+	if let Some(forfeit) = stream_id.get::<String>("forfeit") {
+		process_forfeit(
+			con,
+			serde_json::from_str(&forfeit).expect("failed to parse forfeit"),
+		)
+		.await;
 	}
 }
 
@@ -171,9 +170,9 @@ async fn process_turn(con: &mut MultiplexedConnection, turn: &str) {
 	}
 }
 
-async fn process_game_start(con: &mut MultiplexedConnection, game_start: &str) {
+async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &str) {
 	let game_start: GameStart =
-		serde_json::from_str(game_start).expect("failed to parse game start");
+		serde_json::from_str(game_start_str).expect("failed to parse game start");
 	let board_key = format!("board:{}", game_start.game_id);
 	let board = Board::new(
 		game_start.white_player.clone(),
@@ -186,20 +185,23 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start: &str) {
 			serde_json::to_string(&board).expect("failed to serialize board"),
 		)
 		.await
-		.expect("failed to get board");
+		.expect("failed to set board");
 	let _: String = con
 		.xadd(
 			format!("game:{}", &game_start.game_id),
 			"*",
-			&[(
-				"turn_start",
-				serde_json::to_string(&TurnStart {
-					turn: game_start.white_player,
-					move_pieces: board.move_pieces,
-					moves: board.moves,
-				})
-				.expect("failed to serialize turn start"),
-			)],
+			&[
+				("game_start", game_start_str),
+				(
+					"turn_start",
+					&serde_json::to_string(&TurnStart {
+						turn: game_start.white_player,
+						move_pieces: board.move_pieces,
+						moves: board.moves,
+					})
+					.expect("failed to serialize turn start"),
+				),
+			],
 		)
 		.await
 		.expect("failed to write to game stream");
@@ -207,7 +209,10 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start: &str) {
 
 async fn process_forfeit(con: &mut MultiplexedConnection, (game_id, player_id): (String, String)) {
 	let board_key = format!("board:{}", game_id);
-	let board_str: String = con.get(&board_key).await.expect("failed to get board");
+	let board_str: String = match con.get(&board_key).await {
+		Ok(board_str) => board_str,
+		Err(_) => return,
+	};
 	let board: Board = serde_json::from_str(board_str.as_str()).expect("failed to parse board");
 	let _: () = con
 		.xadd(

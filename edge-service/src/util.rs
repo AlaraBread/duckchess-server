@@ -7,10 +7,3 @@ pub async fn close_socket(socket: &mut DuplexStream, message: String) {
 	};
 	let _ = socket.close(Some(close_frame)).await;
 }
-
-pub async fn conditional_future<'a, T, F: Future<Output = T>>(future: Option<F>) -> Option<T> {
-	match future {
-		Some(future) => Some(future.await),
-		None => None,
-	}
-}

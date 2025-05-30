@@ -7,7 +7,7 @@ use redis::{AsyncCommands, RedisFuture};
 use rocket::futures::StreamExt;
 use rocket::{Shutdown, get, launch, routes};
 
-use crate::util::{close_socket, conditional_future};
+use crate::util::close_socket;
 use rocket::http::{Cookie, CookieJar};
 use rocket::tokio;
 use rocket_db_pools::{
@@ -21,19 +21,24 @@ use ws::{Channel, WebSocket};
 #[get("/")]
 async fn play(
 	ws: WebSocket,
-	db: Connection<PostgresPool>,
+	mut db: Connection<PostgresPool>,
 	redis: Connection<RedisPool>,
 	cookies: &CookieJar<'_>,
 	mut end: Shutdown,
 ) -> Channel<'static> {
 	let user_id = cookies
-		.get_private("user_id")
+		.get("user_id")
 		.map(|c| c.value().to_string())
 		.unwrap_or_else(|| {
 			let id = Uuid::new_v7(Timestamp::now(NoContext)).to_string();
-			cookies.add_private(Cookie::new("user_id", id.clone()));
+			cookies.add(Cookie::new("user_id", id.clone()));
 			id
 		});
+	sqlx::query("INSERT INTO users (id, elo) VALUES ($1, 1500) ON CONFLICT DO NOTHING")
+		.bind(&user_id)
+		.execute(&mut **db)
+		.await
+		.expect("postgres error");
 	ws.channel(move |socket| {
 		Box::pin(async move {
 			let mut socket_state = match PlaySocket::new(socket, user_id, db, redis).await {
@@ -44,22 +49,31 @@ async fn play(
 				}
 			};
 			socket_state.matchmake().await;
-			socket_state.send_game_state().await;
-			let stream_options = StreamReadOptions::default().block(10000).count(1);
+			let stream_options = StreamReadOptions::default().block(1000).count(1);
 			let matchmaking_stream_key = &[format!("matchmaking:{}", socket_state.user_id)];
-			let mut matchmaking_redis = socket_state.redis.clone();
-			let mut game_redis = socket_state.redis.clone();
+			let mut redis = socket_state.redis.clone();
 			let close_message;
 			let allow_reconnect;
+			let mut last_matchmaking_message_id: Option<String> = None;
+			let mut last_game_message_id: Option<String> = None;
 			'main_loop: loop {
-				let matchmaking_stream: RedisFuture<StreamReadReply> = matchmaking_redis
-					.xread_options(matchmaking_stream_key, &[">"], &stream_options);
+				let last_id;
 				let game_stream_key;
-				let game_stream: Option<RedisFuture<StreamReadReply>> = match &socket_state.state {
-					PlaySocketState::Matchmaking { .. } => None,
+				let redis_stream: RedisFuture<StreamReadReply> = match &socket_state.state {
+					PlaySocketState::Matchmaking { .. } => {
+						last_id = [match &last_matchmaking_message_id {
+							Some(id) => id.as_str(),
+							None => "$",
+						}];
+						redis.xread_options(matchmaking_stream_key, &last_id, &stream_options)
+					}
 					PlaySocketState::Game { game_id, .. } => {
 						game_stream_key = [format!("game:{}", &game_id)];
-						Some(game_redis.xread_options(&game_stream_key, &[">"], &stream_options))
+						last_id = [match &last_game_message_id {
+							Some(id) => id.as_str(),
+							None => "$",
+						}];
+						redis.xread_options(&game_stream_key, &last_id, &stream_options)
 					}
 				};
 				tokio::select! {
@@ -76,34 +90,34 @@ async fn play(
 							_ => {}
 						}
 					}
-					Ok(message) = matchmaking_stream => {
-						for StreamKey {ids, ..} in message.keys {
+					Ok(message) = redis_stream => {
+						for StreamKey {ids, key} in message.keys {
 							for message in ids {
-								let game_id: String = match message.get("match") {
-									Some(m) => m,
-									None => continue
-								};
-								socket_state.start_game(game_id).await;
-							}
-						}
-					}
-					Some(Ok(message)) = conditional_future(game_stream) => {
-						for StreamKey {ids, ..} in message.keys {
-							for message in ids {
-								if let Some(turn_start) = message.get::<String>("turn_start") {
-									socket_state.turn_start(turn_start).await;
-								}
-								if let Some(moves) = message.get::<String>("moves") {
-									socket_state.moves_recieved(moves).await;
-								}
-								if let Some(chat) = message.get::<String>("chat") {
-									socket_state.chat_recieved(chat).await;
-								}
-								if let Some(winner) = message.get::<String>("end") {
-									socket_state.game_end(winner).await;
-									close_message = "game ended";
-									allow_reconnect = false;
-									break 'main_loop;
+								if key.starts_with("matchmaking:") {
+									if let Some(game_id) = message.get::<String>("match") {
+										socket_state.matched(game_id).await;
+									}
+									last_matchmaking_message_id = Some(message.id.clone());
+								} else if key.starts_with("game:") {
+									if let Some(game_start) = message.get::<String>("game_start") {
+										socket_state.game_start(game_start).await;
+									}
+									if let Some(turn_start) = message.get::<String>("turn_start") {
+										socket_state.turn_start(turn_start).await;
+									}
+									if let Some(moves) = message.get::<String>("moves") {
+										socket_state.moves_recieved(moves).await;
+									}
+									if let Some(chat) = message.get::<String>("chat") {
+										socket_state.chat_recieved(chat).await;
+									}
+									if let Some(winner) = message.get::<String>("end") {
+										socket_state.game_end(winner).await;
+										close_message = "game ended";
+										allow_reconnect = false;
+										break 'main_loop;
+									}
+									last_game_message_id = Some(message.id.clone())
 								}
 							}
 						}

@@ -98,7 +98,7 @@ impl PlaySocket {
 		if allow_reconnect {
 			tokio::spawn(async move {
 				let disconnect_snowflake = self.set_disconnect_snowflake().await;
-				tokio::time::sleep(Duration::from_secs(60)).await;
+				tokio::time::sleep(Duration::from_secs(5)).await;
 				// if the snowflake changed during the sleep, someone else joined and left while we were sleeping
 				// we will let that socket handle the cleanup
 				let snowflake_match = self.get_disconnect_snowflake().await == disconnect_snowflake;
@@ -130,7 +130,11 @@ impl PlaySocket {
 				.xadd(
 					"game_requests",
 					"*",
-					&[("forfeit", (&game_id, &self.user_id))],
+					&[(
+						"forfeit",
+						&serde_json::to_string(&(&game_id, &self.user_id))
+							.expect("failed to serialize forfeit"),
+					)],
 				)
 				.await
 				.expect("redis error");
@@ -141,6 +145,7 @@ impl PlaySocket {
 				format!("socket_state:{}", &self.user_id),
 				format!("matchmaking:{}", &self.user_id),
 				format!("user_socket_count:{}", &self.user_id),
+				format!("disconnect_snowflake:{}", &self.user_id),
 			])
 			.await
 			.expect("redis error");
@@ -250,7 +255,7 @@ impl PlaySocket {
 				)
 				.await
 				.expect("redis error");
-			self.start_game(game_id).await;
+			self.matched(game_id).await;
 		}
 	}
 	pub async fn expand_elo_range(&mut self) {
@@ -265,11 +270,21 @@ impl PlaySocket {
 			self.matchmake().await;
 		}
 	}
-	pub async fn start_game(&mut self, game_id: String) {
+	pub async fn matched(&mut self, game_id: String) {
 		self.state = PlaySocketState::Game {
 			game_id,
 			my_turn: false,
 		};
+		self.save_state().await;
+	}
+	pub async fn game_start(&mut self, game_start: String) {
+		let game_start: GameStart =
+			serde_json::from_str(&game_start).expect("failed to parse game start");
+		self.state = PlaySocketState::Game {
+			game_id: game_start.game_id,
+			my_turn: false,
+		};
+		self.send_game_state().await;
 		self.save_state().await;
 	}
 	pub async fn turn_start(&mut self, turn_start: String) {
@@ -304,8 +319,12 @@ impl PlaySocket {
 	pub async fn chat_recieved(&mut self, message: String) {
 		let chat_message: ChatMessage =
 			serde_json::from_str(&message).expect("failed to parse chat message");
-		let _ = self
-			.socket
+		if chat_message.id != self.user_id {
+			Self::send_chat_message(&mut self.socket, chat_message).await;
+		}
+	}
+	async fn send_chat_message(socket: &mut DuplexStream, chat_message: ChatMessage) {
+		let _ = socket
 			.send(ws::Message::Text(
 				serde_json::to_string(&PlayResponse::ChatMessage {
 					message: chat_message,
@@ -325,7 +344,10 @@ impl PlaySocket {
 	}
 	// handle message from user
 	pub async fn handle_message(&mut self, message: &str) {
-		let message: PlayRequest = serde_json::from_str(message).expect("failed to parse message");
+		let message: PlayRequest = match serde_json::from_str(message) {
+			Ok(message) => message,
+			Err(_) => return,
+		};
 		match message {
 			PlayRequest::Turn {
 				piece_idx,
@@ -358,12 +380,13 @@ impl PlaySocket {
 				if message.len() > 1024 {
 					return;
 				}
-				if let PlaySocketState::Game { game_id, .. } = &mut self.state {
-					let message = serde_json::to_string(&ChatMessage {
+				if let PlaySocketState::Game { game_id, .. } = &self.state {
+					let chat_message = ChatMessage {
 						id: self.user_id.clone(),
 						message,
-					})
-					.expect("failed to serialize chat message");
+					};
+					let message = serde_json::to_string(&chat_message)
+						.expect("failed to serialize chat message");
 					let _: () = self
 						.redis
 						.xadd(
@@ -373,6 +396,7 @@ impl PlaySocket {
 						)
 						.await
 						.expect("redis error");
+					Self::send_chat_message(&mut self.socket, chat_message).await;
 					let chat_key = format!("chat:{}", game_id);
 					let _: usize = self
 						.redis
