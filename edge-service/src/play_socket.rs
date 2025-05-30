@@ -203,7 +203,7 @@ impl PlaySocket {
 			}
 			.get(0);
 			let results = sqlx::query(
-				"DELETE FROM matchmaking_players WHERE id = $1 OR id = $2 RETURNING id",
+				"DELETE FROM matchmaking_players WHERE id = $1 OR id = $2 RETURNING id, elo, elo_range, start_time",
 			)
 			.bind(&matched_player)
 			.bind(&self.user_id)
@@ -211,19 +211,28 @@ impl PlaySocket {
 			.await
 			.expect("postgres error");
 			if results.len() != 2 {
-				// concurrency issue:
+				// concurrency issue
 				if results
 					.iter()
 					.find(|row| row.get::<String, usize>(0) == self.user_id)
 					.is_some()
 				{
-					// we got matched with someone else and don't know yet
-					// dont need to do anything here
-				} else {
 					// the person we matched with has already been matched with someone else
 					// we should re-enter the matchmaking queue
 					Self::enter_matchmaking_queue(&self.user_id, &mut self.db, *elo, *elo_range)
 						.await;
+				} else {
+					// we got matched with someone else and don't know yet
+					for matched_player in results.iter() {
+						// we need to add the matched player back into the queue
+						Self::enter_matchmaking_queue(
+							matched_player.get(0),
+							&mut self.db,
+							matched_player.get(1),
+							matched_player.get(2),
+						)
+						.await;
+					}
 				}
 				return;
 			}
