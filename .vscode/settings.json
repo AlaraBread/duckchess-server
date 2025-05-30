@@ -1,0 +1,7 @@
+{
+  "rust-analyzer.linkedProjects": [
+    "edge-service/Cargo.toml",
+    "game-service/Cargo.toml",
+    "common/Cargo.toml"
+  ]
+}

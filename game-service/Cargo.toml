@@ -1,0 +1,14 @@
+[package]
+name = "duckchess-game-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+redis = { version = "0.31.0", features = ["streams", "aio", "tokio-comp"] }
+tokio = { version = "1.45.1", features = ["full"] }
+dotenvy = "0.15.7"
+# using rocket for serialization to ensure same serde version on both ends
+rocket = { version = "0.5.1", features = ["json"] }
+
+[dependencies.duckchess-common]
+path = "../common"

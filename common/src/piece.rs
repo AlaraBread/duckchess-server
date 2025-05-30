@@ -51,7 +51,6 @@ impl Piece {
 					if blocking.owner != self.owner {
 						// capture
 						moves.push(Move {
-							game_id: board.id,
 							move_type: move_type.clone(),
 							from: pos,
 							to,
@@ -60,7 +59,6 @@ impl Piece {
 					break;
 				}
 				moves.push(Move {
-					game_id: board.id,
 					move_type: move_type.clone(),
 					from: pos,
 					to,
@@ -152,7 +150,6 @@ impl Piece {
 						break;
 					}
 					moves.push(Move {
-						game_id: board.id,
 						move_type: MoveType::SlidingMove,
 						from: pos,
 						to,
@@ -167,7 +164,6 @@ impl Piece {
 					if let Some(piece) = &board.get_tile(to).piece {
 						if piece.owner != self.owner {
 							moves.push(Move {
-								game_id: board.id,
 								move_type: MoveType::SlidingMove,
 								from: pos,
 								to,
@@ -192,7 +188,6 @@ impl Piece {
 						}) => {
 							if *owner != self.owner {
 								moves.push(Move {
-									game_id: board.id,
 									move_type: MoveType::EnPassant,
 									from: pos,
 									to,
@@ -219,7 +214,6 @@ impl Piece {
 								PieceType::Castle,
 							] {
 								moves.push(Move {
-									game_id: board.id,
 									to: original_move.to,
 									from: original_move.from,
 									move_type: MoveType::Promotion { into },

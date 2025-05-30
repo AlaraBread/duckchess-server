@@ -1,5 +1,5 @@
 [package]
-name = "duckchess-types"
+name = "duckchess-common"
 version = "0.1.0"
 edition = "2024"
 

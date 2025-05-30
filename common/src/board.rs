@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
 	piece::{Piece, PieceType},
-	play::PlayResponse,
 	vec2::Vec2,
 };
 
@@ -43,7 +42,6 @@ pub struct Tile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub struct Move {
-	pub game_id: u64,
 	pub move_type: MoveType,
 	pub from: Vec2,
 	pub to: Vec2,
@@ -78,10 +76,10 @@ impl Move {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub struct Board {
-	pub id: u64,
+	pub id: String,
 	pub turn: Player,
-	pub white_player: u64,
-	pub black_player: u64,
+	pub white_player: String,
+	pub black_player: String,
 	pub board: [[Tile; 8]; 8],
 	pub kings: [Vec2; 2],
 	pub move_pieces: Vec<Vec2>,
@@ -106,13 +104,6 @@ impl Board {
 			}
 		}
 	}
-	pub fn turn_message(&self) -> PlayResponse {
-		PlayResponse::TurnStart {
-			turn: self.turn,
-			move_pieces: self.move_pieces.clone(),
-			moves: self.moves.clone(),
-		}
-	}
 	pub fn about_to_win(&mut self) -> bool {
 		self.generate_moves(false);
 		self.moves
@@ -127,21 +118,23 @@ impl Board {
 	}
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
+pub struct Turn {
+	pub game_id: String,
+	pub piece_idx: usize,
+	pub move_idx: usize,
+}
+
 // do moves
 impl Board {
-	pub fn evaluate_turn(
-		&self,
-		game_id: u64,
-		piece_idx: usize,
-		move_idx: usize,
-	) -> Option<Vec<Move>> {
-		let in_move = self.moves.get(piece_idx)?.get(move_idx)?.clone();
+	pub fn evaluate_turn(&mut self, turn: &Turn) -> Option<Vec<Move>> {
+		let in_move = self.moves.get(turn.piece_idx)?.get(turn.move_idx)?.clone();
 		let mut output_moves = vec![in_move.clone()];
 		match in_move.move_type {
 			MoveType::EnPassant => output_moves.insert(
 				0,
 				Move {
-					game_id,
 					move_type: MoveType::JumpingMove,
 					from: Vec2(in_move.to.0, in_move.from.1),
 					to: in_move.to,
@@ -150,11 +143,13 @@ impl Board {
 			_ => {}
 		}
 		output_moves.push(Move {
-			game_id,
 			move_type: MoveType::TurnEnd,
 			from: Vec2(-1, -1),
 			to: Vec2(-1, -1),
 		});
+		for move_ in output_moves.iter() {
+			self.do_move(move_);
+		}
 		return Some(output_moves);
 	}
 	pub fn do_move(&mut self, mov: &Move) -> () {
@@ -220,10 +215,10 @@ impl Board {
 }
 
 impl Board {
-	pub fn get_player_id(&self) -> u64 {
+	pub fn get_player_id(&self) -> &str {
 		match self.turn {
-			Player::White => self.white_player,
-			Player::Black => self.black_player,
+			Player::White => &self.white_player,
+			Player::Black => &self.black_player,
 		}
 	}
 	fn find_king_position(board: &[[Tile; 8]; 8], player: Player) -> Vec2 {
@@ -255,7 +250,7 @@ impl Board {
 	pub fn get_tile_mut(&mut self, pos: Vec2) -> &mut Tile {
 		&mut self.board[pos.1 as usize][pos.0 as usize]
 	}
-	pub fn new(white_player: u64, black_player: u64, game_id: u64) -> Self {
+	pub fn new(white_player: String, black_player: String, game_id: String) -> Self {
 		let board = (0..8)
 			.into_iter()
 			.map(|i| {
@@ -403,3 +398,11 @@ const DEFAULT_BOARD: [[Option<Piece>; 8]; 8] = [
 		}),
 	],
 ];
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
+pub struct GameStart {
+	pub white_player: String,
+	pub black_player: String,
+	pub game_id: String,
+}

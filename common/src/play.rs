@@ -1,6 +1,6 @@
 use rocket::serde::{Deserialize, Serialize};
 
-use crate::{Board, Move, Player, Vec2};
+use crate::{Board, Move, Vec2};
 
 #[derive(Deserialize, Debug)]
 #[serde(
@@ -12,9 +12,10 @@ use crate::{Board, Move, Player, Vec2};
 pub enum PlayRequest {
 	Turn { piece_idx: usize, move_idx: usize },
 	ChatMessage { message: String },
+	ExpandEloRange,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(
 	crate = "rocket::serde",
 	rename_all = "camelCase",
@@ -25,25 +26,13 @@ pub enum PlayResponse {
 	InvalidRequest,
 	SelfInfo {
 		// the reciever's player id
-		id: u64,
-	},
-	PlayerAdded {
-		id: u64,
-	},
-	PlayerRemoved {
-		id: u64,
-	},
-	PlayerJoined {
-		id: u64,
-	},
-	PlayerLeft {
-		id: u64,
+		id: String,
 	},
 	GameState {
-		state: GameState,
+		board: Board,
 	},
 	TurnStart {
-		turn: Player,
+		turn: String,
 		move_pieces: Vec<Vec2>,
 		moves: Vec<Vec<Move>>,
 	},
@@ -51,19 +40,27 @@ pub enum PlayResponse {
 		moves: Vec<Move>,
 	},
 	End {
-		winner: Option<Player>,
+		winner: Option<String>,
 	},
 	ChatMessage {
-		id: u64,
-		message: String,
+		message: ChatMessage,
+	},
+	FullChat {
+		chat: Vec<ChatMessage>,
 	},
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(crate = "rocket::serde", rename_all = "camelCase")]
+pub struct ChatMessage {
+	pub id: String,
+	pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
-pub struct GameState {
-	pub players: Vec<u64>,
-	pub listening_players: Vec<u64>,
-	pub board: Option<Board>,
-	pub started: bool,
+pub struct TurnStart {
+	pub turn: String,
+	pub move_pieces: Vec<Vec2>,
+	pub moves: Vec<Vec<Move>>,
 }
