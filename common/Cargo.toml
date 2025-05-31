@@ -8,4 +8,3 @@ crate-type = ["lib"]
 
 [dependencies]
 rocket = { version = "0.5.1", features = ["json"] }
-serde = "1.0.216"

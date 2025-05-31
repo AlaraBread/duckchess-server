@@ -1,5 +1,6 @@
 use std::ops::Not;
 
+use rocket::serde;
 use serde::{Deserialize, Serialize};
 
 use crate::{
