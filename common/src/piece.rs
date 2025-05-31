@@ -74,22 +74,70 @@ impl Piece {
 			return vec![];
 		}
 		let moves = match self.piece_type {
-			PieceType::King => self.generate_simple_moves(
-				&[
-					Vec2(0, 1),
-					Vec2(0, -1),
-					Vec2(1, 0),
-					Vec2(-1, 0),
-					Vec2(-1, -1),
-					Vec2(-1, 1),
-					Vec2(1, -1),
-					Vec2(1, 1),
-				],
-				1,
-				pos,
-				MoveType::SlidingMove,
-				board,
-			),
+			PieceType::King => {
+				let mut moves = self.generate_simple_moves(
+					&[
+						Vec2(0, 1),
+						Vec2(0, -1),
+						Vec2(1, 0),
+						Vec2(-1, 0),
+						Vec2(-1, -1),
+						Vec2(-1, 1),
+						Vec2(1, -1),
+						Vec2(1, 1),
+					],
+					1,
+					pos,
+					MoveType::SlidingMove,
+					board,
+				);
+				// castling
+				if !self.has_moved && (pos.0 == 3 || pos.0 == 4) {
+					'castle_position: for castle_position in [Vec2(0, pos.1), Vec2(7, pos.1)] {
+						if let Some(Piece {
+							piece_type: PieceType::Castle,
+							owner,
+							has_moved: false,
+						}) = &board.get_tile(castle_position).piece
+						{
+							if *owner != self.owner {
+								continue;
+							}
+							let direction = Vec2(if castle_position.0 == 0 { -1 } else { 1 }, 0);
+							let mut cur = pos + direction;
+							while (cur + direction).is_inside_board() {
+								if board.get_tile(cur).piece.is_some() {
+									continue 'castle_position;
+								}
+								cur += &direction;
+							}
+							let new_king_position = pos + direction * 2;
+							// cant move from, through, or onto an attacked tile
+							let mut cur = pos;
+							while cur != new_king_position + direction {
+								let move_ = Move {
+									move_type: MoveType::JumpingMove,
+									from: pos,
+									to: new_king_position,
+								};
+								if move_.would_cause_lose(board) {
+									continue 'castle_position;
+								}
+								cur += &direction;
+							}
+							moves.push(Move {
+								move_type: MoveType::Castle {
+									from: castle_position,
+									to: new_king_position - direction,
+								},
+								from: pos,
+								to: new_king_position,
+							});
+						}
+					}
+				}
+				moves
+			}
 			PieceType::Queen => self.generate_simple_moves(
 				&[
 					Vec2(0, 1),

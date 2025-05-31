@@ -60,8 +60,8 @@ pub enum MoveType {
 	SlidingMove,
 	EnPassant,
 	Promotion { into: PieceType },
+	Castle { from: Vec2, to: Vec2 },
 	TurnEnd,
-	GameOver { winner: Player },
 }
 
 impl Move {
@@ -141,6 +141,14 @@ impl Board {
 					to: in_move.to,
 				},
 			),
+			MoveType::Castle { from, to } => output_moves.insert(
+				0,
+				Move {
+					move_type: MoveType::SlidingMove,
+					from,
+					to,
+				},
+			),
 			_ => {}
 		}
 		output_moves.push(Move {
@@ -185,7 +193,9 @@ impl Board {
 			_ => {}
 		}
 		if let Some(ref mut piece) = piece {
-			piece.has_moved = true;
+			if start != end {
+				piece.has_moved = true;
+			}
 		}
 		match &mov.move_type {
 			MoveType::Promotion { into } => {
