@@ -116,9 +116,11 @@ impl PlaySocket {
 				// if the snowflake changed during the sleep,
 				// another socket for the same player joined or left while we were sleeping.
 				// we will let that socket handle the cleanup
-				if self.get_disconnect_snowflake().await == disconnect_snowflake {
-					// cleanup
-					self.cleanup(true).await;
+				if let Some(new_snowflake) = self.get_disconnect_snowflake().await {
+					if new_snowflake == disconnect_snowflake {
+						// cleanup
+						self.cleanup(true).await;
+					}
 				}
 			});
 		} else {
@@ -168,11 +170,11 @@ impl PlaySocket {
 			.expect("redis error");
 		return disconnect_snowflake;
 	}
-	async fn get_disconnect_snowflake(&mut self) -> String {
+	async fn get_disconnect_snowflake(&mut self) -> Option<String> {
 		self.redis
 			.get::<String, String>(format!("disconnect_snowflake:{}", &self.user_id))
 			.await
-			.expect("redis error")
+			.ok()
 	}
 	pub async fn save_state(&mut self) {
 		let state = serde_json::to_string(&self.state).expect("couldnt serialize state");
