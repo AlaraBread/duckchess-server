@@ -10,7 +10,7 @@ use std::{
 };
 
 use dotenvy::dotenv;
-use duckchess_common::{Board, GameStart, Turn, TurnStart};
+use duckchess_common::{Board, GameStart, Player, Turn, TurnStart};
 use redis::{
 	AsyncCommands,
 	aio::MultiplexedConnection,
@@ -174,7 +174,18 @@ async fn process_turn(con: &mut MultiplexedConnection, turn: &str) {
 			format!("game:{}", turn.game_id),
 			redis::streams::StreamMaxlen::Approx(1000),
 			"*",
-			&[("moves", serde_json::to_string(&computed_moves).unwrap())],
+			&[
+				("moves", serde_json::to_string(&computed_moves).unwrap()),
+				(
+					"turn_start",
+					serde_json::to_string(&TurnStart {
+						turn: board.turn,
+						move_pieces: board.move_pieces.clone(),
+						moves: board.moves.clone(),
+					})
+					.expect("failed to serialize turn start"),
+				),
+			],
 		)
 		.await
 		.expect("Failed to write to moves stream");
@@ -218,7 +229,7 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 				(
 					"turn_start",
 					&serde_json::to_string(&TurnStart {
-						turn: game_start.white_player,
+						turn: Player::White,
 						move_pieces: board.move_pieces,
 						moves: board.moves,
 					})
