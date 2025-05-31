@@ -1,4 +1,13 @@
-use std::{any::type_name, collections::HashMap, env, str::FromStr};
+use std::{
+	any::type_name,
+	collections::HashMap,
+	env,
+	str::FromStr,
+	sync::{
+		Arc,
+		atomic::{AtomicBool, Ordering},
+	},
+};
 
 use dotenvy::dotenv;
 use duckchess_common::{Board, GameStart, Turn, TurnStart};
@@ -21,6 +30,14 @@ async fn main() {
 	let autoclaim_time: u64 = get_env_var(&env_vars, "AUTOCLAIM_TIME_MS");
 	let consumer_id: String = get_env_var(&env_vars, "CONSUMER_ID");
 	let consumer_group: String = get_env_var(&env_vars, "CONSUMER_GROUP");
+
+	let should_exit = Arc::new(AtomicBool::new(false));
+	let should_exit_2 = should_exit.clone();
+	ctrlc::set_handler(move || {
+		println!("received Ctrl+C. gracefully shutting down.");
+		should_exit_2.store(true, Ordering::Relaxed);
+	})
+	.expect("Error setting Ctrl-C handler");
 
 	let client =
 		redis::Client::open(format!("redis://{}", redis_url)).expect("failed to open redis client");
@@ -86,6 +103,9 @@ async fn main() {
 				.collect(),
 		)
 		.await;
+		if should_exit.load(Ordering::Relaxed) {
+			break;
+		}
 	}
 }
 

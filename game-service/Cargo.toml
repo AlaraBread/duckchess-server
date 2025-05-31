@@ -9,6 +9,7 @@ tokio = { version = "1.45.1", features = ["full"] }
 dotenvy = "0.15.7"
 # using rocket for serialization to ensure same serde version on both ends
 rocket = { version = "0.5.1", features = ["json"] }
+ctrlc = "3.4.7"
 
 [dependencies.duckchess-common]
 path = "../common"
