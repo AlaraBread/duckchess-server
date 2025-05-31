@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use duckchess_common::{
-	Board, ChatMessage, GameStart, Move, PlayRequest, PlayResponse, Turn, TurnStart,
+	Board, ChatMessage, GameStart, Move, PlayRequest, PlayResponse, Player, Turn, TurnStart,
 };
 use rand::Rng;
 use redis::AsyncCommands;
@@ -31,8 +31,15 @@ pub struct PlaySocket {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub enum PlaySocketState {
-	Matchmaking { elo: f32, elo_range: f32 },
-	Game { game_id: String, my_turn: bool },
+	Matchmaking {
+		elo: f32,
+		elo_range: f32,
+	},
+	Game {
+		game_id: String,
+		my_turn: bool,
+		player: Player,
+	},
 }
 
 impl PlaySocket {
@@ -82,8 +89,20 @@ impl PlaySocket {
 			}
 		};
 		state.set_disconnect_snowflake().await;
+		state.send_self_info().await;
 		state.send_game_state().await;
 		Ok(state)
+	}
+	async fn send_self_info(&mut self) {
+		let _ = self
+			.socket
+			.send(ws::Message::Text(
+				serde_json::to_string(&PlayResponse::SelfInfo {
+					id: self.user_id.clone(),
+				})
+				.expect("failed to serialize self info"),
+			))
+			.await;
 	}
 	pub async fn disconnected(mut self: Self, close_message: &str, allow_reconnect: bool) {
 		// leave matchmaking queue immidiately to prevent getting matched while disconnected
@@ -270,6 +289,7 @@ impl PlaySocket {
 		self.state = PlaySocketState::Game {
 			game_id,
 			my_turn: false,
+			player: Player::Black,
 		};
 		self.save_state().await;
 	}
@@ -279,6 +299,10 @@ impl PlaySocket {
 		self.state = PlaySocketState::Game {
 			game_id: game_start.game_id,
 			my_turn: false,
+			player: match self.user_id == game_start.white_player {
+				true => Player::White,
+				false => Player::Black,
+			},
 		};
 		self.send_game_state().await;
 		self.save_state().await;
@@ -286,8 +310,11 @@ impl PlaySocket {
 	pub async fn turn_start(&mut self, turn_start: String) {
 		let turn_start: TurnStart =
 			serde_json::from_str(&turn_start).expect("failed to parse turn start");
-		if let PlaySocketState::Game { my_turn, .. } = &mut self.state {
-			*my_turn = turn_start.turn == self.user_id;
+		if let PlaySocketState::Game {
+			my_turn, player, ..
+		} = &mut self.state
+		{
+			*my_turn = turn_start.turn == *player;
 			let _ = self
 				.socket
 				.send(ws::Message::Text(
@@ -349,7 +376,10 @@ impl PlaySocket {
 				piece_idx,
 				move_idx,
 			} => {
-				if let PlaySocketState::Game { game_id, my_turn } = &mut self.state {
+				if let PlaySocketState::Game {
+					game_id, my_turn, ..
+				} = &mut self.state
+				{
 					if !*my_turn {
 						return;
 					}

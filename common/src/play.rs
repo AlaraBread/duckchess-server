@@ -1,6 +1,6 @@
 use rocket::serde::{Deserialize, Serialize};
 
-use crate::{Board, Move, Vec2};
+use crate::{Board, Move, Player, Vec2};
 
 #[derive(Deserialize, Debug)]
 #[serde(
@@ -32,7 +32,7 @@ pub enum PlayResponse {
 		board: Board,
 	},
 	TurnStart {
-		turn: String,
+		turn: Player,
 		move_pieces: Vec<Vec2>,
 		moves: Vec<Vec<Move>>,
 	},
@@ -60,7 +60,7 @@ pub struct ChatMessage {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub struct TurnStart {
-	pub turn: String,
+	pub turn: Player,
 	pub move_pieces: Vec<Vec2>,
 	pub moves: Vec<Vec<Move>>,
 }
