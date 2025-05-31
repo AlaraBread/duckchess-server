@@ -81,34 +81,21 @@ impl PlaySocket {
 				state
 			}
 		};
-		let _: i64 = state
-			.redis
-			.incr(format!("user_socket_count:{}", &state.user_id), 1)
-			.await
-			.expect("redis error");
+		state.set_disconnect_snowflake().await;
+		state.send_game_state().await;
 		Ok(state)
 	}
 	pub async fn disconnected(mut self: Self, close_message: &str, allow_reconnect: bool) {
+		// leave matchmaking queue immidiately to prevent getting matched while disconnected
+		Self::leave_matchmaking_queue(&self.user_id, &mut self.db).await;
 		close_socket(&mut self.socket, close_message.to_string()).await;
-		let _: i64 = self
-			.redis
-			.decr(format!("user_socket_count:{}", &self.user_id), 1)
-			.await
-			.expect("redis error");
 		if allow_reconnect {
 			tokio::spawn(async move {
 				let disconnect_snowflake = self.set_disconnect_snowflake().await;
 				tokio::time::sleep(Duration::from_secs(5)).await;
-				// if the snowflake changed during the sleep, someone else joined and left while we were sleeping
+				// if the snowflake changed during the sleep, someone else joined or left while we were sleeping
 				// we will let that socket handle the cleanup
-				let snowflake_match = self.get_disconnect_snowflake().await == disconnect_snowflake;
-				// if another socket still exists for this player, we shouldn't cleanup
-				let current_socket_count = self
-					.redis
-					.get::<String, i64>(format!("user_socket_count:{}", &self.user_id))
-					.await
-					.expect("redis error");
-				if current_socket_count <= 0 && snowflake_match {
+				if self.get_disconnect_snowflake().await == disconnect_snowflake {
 					// cleanup
 					self.cleanup().await;
 				}
@@ -118,11 +105,7 @@ impl PlaySocket {
 		}
 	}
 	async fn cleanup(&mut self) {
-		sqlx::query("DELETE FROM matchmaking_players WHERE id = $1")
-			.bind(&self.user_id)
-			.execute(&mut **self.db)
-			.await
-			.expect("postgres error");
+		Self::leave_matchmaking_queue(&self.user_id, &mut self.db).await;
 		if let PlaySocketState::Game { game_id, .. } = &self.state {
 			// forfeit the game (game service handles game cleanup)
 			let _: () = self
@@ -145,7 +128,6 @@ impl PlaySocket {
 			.del(&[
 				format!("socket_state:{}", &self.user_id),
 				format!("matchmaking:{}", &self.user_id),
-				format!("user_socket_count:{}", &self.user_id),
 				format!("disconnect_snowflake:{}", &self.user_id),
 			])
 			.await
@@ -202,40 +184,12 @@ impl PlaySocket {
 				}
 			}
 			.get(0);
-			let results = sqlx::query(
-				"DELETE FROM matchmaking_players WHERE id = $1 OR id = $2 RETURNING id, elo, elo_range, start_time",
-			)
-			.bind(&matched_player)
-			.bind(&self.user_id)
-			.fetch_all(&mut **self.db)
-			.await
-			.expect("postgres error");
-			if results.len() != 2 {
-				// concurrency issue
-				if results
-					.iter()
-					.find(|row| row.get::<String, usize>(0) == self.user_id)
-					.is_some()
-				{
-					// the person we matched with has already been matched with someone else
-					// we should re-enter the matchmaking queue
-					Self::enter_matchmaking_queue(&self.user_id, &mut self.db, *elo, *elo_range)
-						.await;
-				} else {
-					// we got matched with someone else and don't know yet
-					for matched_player in results.iter() {
-						// we need to add the matched player back into the queue
-						Self::enter_matchmaking_queue(
-							matched_player.get(0),
-							&mut self.db,
-							matched_player.get(1),
-							matched_player.get(2),
-						)
-						.await;
-					}
-				}
-				return;
-			}
+			sqlx::query("DELETE FROM matchmaking_players WHERE id = $1 OR id = $2")
+				.bind(&matched_player)
+				.bind(&self.user_id)
+				.execute(&mut **self.db)
+				.await
+				.expect("postgres error");
 			let game_id = Uuid::new_v7(Timestamp::now(NoContext)).to_string();
 			// let the other player know they just got matched
 			let _: () = self
@@ -279,11 +233,7 @@ impl PlaySocket {
 		elo: f32,
 		elo_range: f32,
 	) {
-		sqlx::query("DELETE FROM matchmaking_players WHERE id = $1")
-			.bind(&user_id)
-			.execute(&mut ***db)
-			.await
-			.expect("postgres error");
+		Self::leave_matchmaking_queue(user_id, db).await;
 		sqlx::query(
 			"INSERT INTO matchmaking_players \
 						(id, elo, elo_range, start_time) \
@@ -296,6 +246,13 @@ impl PlaySocket {
 		.execute(&mut ***db)
 		.await
 		.expect("postgres error");
+	}
+	async fn leave_matchmaking_queue(user_id: &str, db: &mut Connection<PostgresPool>) {
+		sqlx::query("DELETE FROM matchmaking_players WHERE id = $1")
+			.bind(&user_id)
+			.execute(&mut ***db)
+			.await
+			.expect("postgres error");
 	}
 	pub async fn expand_elo_range(&mut self) {
 		if let PlaySocketState::Matchmaking { elo_range, .. } = &mut self.state {

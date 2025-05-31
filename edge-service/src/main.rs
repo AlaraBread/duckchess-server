@@ -26,7 +26,7 @@ async fn play(
 	cookies: &CookieJar<'_>,
 	mut end: Shutdown,
 ) -> Result<Channel<'static>, ErrorResponse> {
-	let user_id = match cookies.get("user_id") {
+	let user_id = match cookies.get_private("user_id") {
 		Some(cookie) => cookie.value().to_string(),
 		None => return Err(ErrorResponse::Unauthorized(())),
 	};
