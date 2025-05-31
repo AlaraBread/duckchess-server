@@ -91,6 +91,7 @@ impl PlaySocket {
 		state.set_disconnect_snowflake().await;
 		state.send_self_info().await;
 		state.send_game_state().await;
+		state.matchmake().await;
 		Ok(state)
 	}
 	async fn send_self_info(&mut self) {
@@ -112,36 +113,20 @@ impl PlaySocket {
 			tokio::spawn(async move {
 				let disconnect_snowflake = self.set_disconnect_snowflake().await;
 				tokio::time::sleep(Duration::from_secs(5)).await;
-				// if the snowflake changed during the sleep, someone else joined or left while we were sleeping
+				// if the snowflake changed during the sleep,
+				// another socket for the same player joined or left while we were sleeping.
 				// we will let that socket handle the cleanup
 				if self.get_disconnect_snowflake().await == disconnect_snowflake {
 					// cleanup
-					self.cleanup().await;
+					self.cleanup(true).await;
 				}
 			});
 		} else {
-			self.cleanup().await;
+			self.cleanup(false).await;
 		}
 	}
-	async fn cleanup(&mut self) {
+	async fn cleanup(&mut self, forfeit: bool) {
 		Self::leave_matchmaking_queue(&self.user_id, &mut self.db).await;
-		if let PlaySocketState::Game { game_id, .. } = &self.state {
-			// forfeit the game (game service handles game cleanup)
-			let _: () = self
-				.redis
-				.xadd_maxlen(
-					"game_requests",
-					redis::streams::StreamMaxlen::Approx(10000),
-					"*",
-					&[(
-						"forfeit",
-						&serde_json::to_string(&(&game_id, &self.user_id))
-							.expect("failed to serialize forfeit"),
-					)],
-				)
-				.await
-				.expect("redis error");
-		}
 		let _: usize = self
 			.redis
 			.del(&[
@@ -151,6 +136,25 @@ impl PlaySocket {
 			])
 			.await
 			.expect("redis error");
+		if let PlaySocketState::Game { game_id, .. } = &self.state {
+			if forfeit {
+				// forfeit the game (game service handles game cleanup)
+				let _: () = self
+					.redis
+					.xadd_maxlen(
+						"game_requests",
+						redis::streams::StreamMaxlen::Approx(10000),
+						"*",
+						&[(
+							"forfeit",
+							&serde_json::to_string(&(&game_id, &self.user_id))
+								.expect("failed to serialize forfeit"),
+						)],
+					)
+					.await
+					.expect("redis error");
+			}
+		}
 	}
 	async fn set_disconnect_snowflake(&mut self) -> String {
 		let disconnect_snowflake = Uuid::new_v7(Timestamp::now(NoContext)).to_string();
@@ -185,12 +189,14 @@ impl PlaySocket {
 			let matched_player: String = match sqlx::query(
 				"SELECT id FROM matchmaking_players WHERE \
 				elo BETWEEN $1 AND $2 AND \
-				$3 BETWEEN elo - elo_range AND elo + elo_range \
+				$3 BETWEEN elo - elo_range AND elo + elo_range AND \
+				id != $4 \
 				ORDER BY start_time ASC LIMIT 1",
 			)
 			.bind(*elo - *elo_range)
 			.bind(*elo + *elo_range)
 			.bind(*elo)
+			.bind(&self.user_id)
 			.fetch_one(&mut **self.db)
 			.await
 			{

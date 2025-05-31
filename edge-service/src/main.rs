@@ -39,9 +39,7 @@ async fn play(
 					return Ok(());
 				}
 			};
-			socket_state.matchmake().await;
 			let stream_options = StreamReadOptions::default().block(1000).count(1);
-			let matchmaking_stream_key = &[format!("matchmaking:{}", socket_state.user_id)];
 			let mut redis = socket_state.redis.clone();
 			let close_message;
 			let allow_reconnect;
@@ -49,22 +47,23 @@ async fn play(
 			let mut last_game_message_id: Option<String> = None;
 			'main_loop: loop {
 				let last_id;
-				let game_stream_key;
+				let stream_key;
 				let redis_stream: RedisFuture<StreamReadReply> = match &socket_state.state {
 					PlaySocketState::Matchmaking { .. } => {
+						stream_key = [format!("matchmaking:{}", socket_state.user_id)];
 						last_id = [match &last_matchmaking_message_id {
 							Some(id) => id.as_str(),
 							None => "$",
 						}];
-						redis.xread_options(matchmaking_stream_key, &last_id, &stream_options)
+						redis.xread_options(&stream_key, &last_id, &stream_options)
 					}
 					PlaySocketState::Game { game_id, .. } => {
-						game_stream_key = [format!("game:{}", &game_id)];
+						stream_key = [format!("game:{}", &game_id)];
 						last_id = [match &last_game_message_id {
 							Some(id) => id.as_str(),
 							None => "$",
 						}];
-						redis.xread_options(&game_stream_key, &last_id, &stream_options)
+						redis.xread_options(&stream_key, &last_id, &stream_options)
 					}
 				};
 				tokio::select! {
