@@ -5,10 +5,10 @@ use play_socket::{PlaySocket, PlaySocketState};
 use redis::streams::{StreamKey, StreamReadOptions, StreamReadReply};
 use redis::{AsyncCommands, RedisFuture};
 use rocket::futures::StreamExt;
-use rocket::{Shutdown, get, launch, routes};
+use rocket::{Responder, Shutdown, get, launch, post, routes};
 
 use crate::util::close_socket;
-use rocket::http::{Cookie, CookieJar};
+use rocket::http::{Cookie, CookieJar, SameSite};
 use rocket::tokio;
 use rocket_db_pools::{
 	Connection, Database,
@@ -21,25 +21,16 @@ use ws::{Channel, WebSocket};
 #[get("/")]
 async fn play(
 	ws: WebSocket,
-	mut db: Connection<PostgresPool>,
+	db: Connection<PostgresPool>,
 	redis: Connection<RedisPool>,
 	cookies: &CookieJar<'_>,
 	mut end: Shutdown,
-) -> Channel<'static> {
-	let user_id = cookies
-		.get("user_id")
-		.map(|c| c.value().to_string())
-		.unwrap_or_else(|| {
-			let id = Uuid::new_v7(Timestamp::now(NoContext)).to_string();
-			cookies.add(Cookie::new("user_id", id.clone()));
-			id
-		});
-	sqlx::query("INSERT INTO users (id, elo) VALUES ($1, 1500) ON CONFLICT DO NOTHING")
-		.bind(&user_id)
-		.execute(&mut **db)
-		.await
-		.expect("postgres error");
-	ws.channel(move |socket| {
+) -> Result<Channel<'static>, ErrorResponse> {
+	let user_id = match cookies.get("user_id") {
+		Some(cookie) => cookie.value().to_string(),
+		None => return Err(ErrorResponse::Unauthorized(())),
+	};
+	Ok(ws.channel(move |socket| {
 		Box::pin(async move {
 			let mut socket_state = match PlaySocket::new(socket, user_id, db, redis).await {
 				Ok(s) => s,
@@ -139,7 +130,37 @@ async fn play(
 				.await;
 			Ok(())
 		})
-	})
+	}))
+}
+
+#[post("/login")]
+async fn login(cookies: &CookieJar<'_>, mut db: Connection<PostgresPool>) {
+	let id = match cookies.get_private("user_id") {
+		Some(id) => id.value().to_string(),
+		None => {
+			let id = Uuid::new_v7(Timestamp::now(NoContext)).to_string();
+			sqlx::query("INSERT INTO users (id, elo) VALUES ($1, 1500) ON CONFLICT DO NOTHING")
+				.bind(&id)
+				.execute(&mut **db)
+				.await
+				.expect("postgres error");
+			id.clone()
+		}
+	};
+	cookies.add_private(
+		Cookie::build(("user_id", id))
+			.http_only(true)
+			.permanent()
+			.same_site(SameSite::Lax)
+			.secure(true)
+			.build(),
+	);
+}
+
+#[derive(Responder)]
+enum ErrorResponse {
+	#[response(status = 401)]
+	Unauthorized(()),
 }
 
 #[derive(Database)]
@@ -153,7 +174,7 @@ struct PostgresPool(sqlx::PgPool);
 #[launch]
 fn rocket() -> _ {
 	rocket::build()
-		.mount("/", routes![play])
+		.mount("/", routes![play, login])
 		.attach(RedisPool::init())
 		.attach(PostgresPool::init())
 }
