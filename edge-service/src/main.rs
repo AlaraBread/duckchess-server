@@ -43,24 +43,30 @@ async fn play(
 			let mut redis = socket_state.redis.clone();
 			let close_message;
 			let allow_reconnect;
-			let mut last_matchmaking_message_id: Option<String> = None;
-			let mut last_game_message_id: Option<String> = None;
 			'main_loop: loop {
 				let last_id;
 				let stream_key;
 				let redis_stream: RedisFuture<StreamReadReply> = match &socket_state.state {
-					PlaySocketState::Game { game_id, .. }
-					| PlaySocketState::UnstartedGame { game_id } => {
+					PlaySocketState::Game {
+						game_id,
+						last_message,
+						..
+					}
+					| PlaySocketState::UnstartedGame {
+						game_id,
+						last_message,
+					} => {
 						stream_key = [format!("game:{}", &game_id)];
-						last_id = [match &last_game_message_id {
+						last_id = [match &last_message {
 							Some(id) => id.as_str(),
 							None => "$",
 						}];
 						redis.xread_options(&stream_key, &last_id, &stream_options)
 					}
-					_ => {
+					PlaySocketState::Matchmaking { last_message, .. }
+					| PlaySocketState::WaitingForSetup { last_message, .. } => {
 						stream_key = [format!("matchmaking:{}", socket_state.user_id)];
-						last_id = [match &last_matchmaking_message_id {
+						last_id = [match &last_message {
 							Some(id) => id.as_str(),
 							None => "$",
 						}];
@@ -82,36 +88,16 @@ async fn play(
 						}
 					}
 					Ok(message) = redis_stream => {
-						for StreamKey {ids, key} in message.keys {
+						for StreamKey {ids, ..} in message.keys {
 							for message in ids {
-								if key.starts_with("matchmaking:") {
-									if let Some(game_id) = message.get::<String>("match") {
-										socket_state.matched(game_id).await;
-									}
-									last_matchmaking_message_id = Some(message.id.clone());
-								} else if key.starts_with("game:") {
-									if let Some(game_start) = message.get::<String>("game_start") {
-										socket_state.game_start(game_start).await;
-									}
-									if let Some(turn_start) = message.get::<String>("turn_start") {
-										socket_state.turn_start(turn_start).await;
-									}
-									if let Some(moves) = message.get::<String>("moves") {
-										socket_state.moves_recieved(moves).await;
-									}
-									if let Some(chat) = message.get::<String>("chat") {
-										socket_state.chat_recieved(chat).await;
-									}
-									if let Some(winner) = message.get::<String>("end") {
-										socket_state.game_end(winner).await;
-										close_message = "game ended";
-										allow_reconnect = false;
-										break 'main_loop;
-									}
-									last_game_message_id = Some(message.id.clone())
+								if !socket_state.process_stream_id(message).await {
+									close_message = "game ended";
+									allow_reconnect = false;
+									break 'main_loop;
 								}
 							}
 						}
+						socket_state.save_state().await;
 					}
 					_ = &mut end => {
 						close_message = "server closed";

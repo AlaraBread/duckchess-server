@@ -1,4 +1,4 @@
-use std::{mem::swap, ops::Not};
+use std::ops::Not;
 
 use rocket::serde;
 use serde::{Deserialize, Serialize};
