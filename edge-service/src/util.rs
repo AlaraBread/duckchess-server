@@ -1,7 +1,7 @@
 use rand::Rng;
 use ws::stream::DuplexStream;
 
-pub async fn close_socket(socket: &mut DuplexStream, message: String) {
+pub async fn close_socket(mut socket: DuplexStream, message: String) {
 	let close_frame = ws::frame::CloseFrame {
 		code: ws::frame::CloseCode::Normal,
 		reason: message.into(),

@@ -35,8 +35,8 @@ async fn play(
 		Box::pin(async move {
 			let mut socket_state = match PlaySocket::new(socket, user_id, db, redis).await {
 				Ok(s) => s,
-				Err((msg, mut socket)) => {
-					close_socket(&mut socket, msg).await;
+				Err((msg, socket)) => {
+					close_socket(socket, msg).await;
 					return Ok(());
 				}
 			};

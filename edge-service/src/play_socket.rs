@@ -96,7 +96,7 @@ impl PlaySocket {
 				state
 			}
 		};
-		state.set_disconnect_snowflake().await;
+		Self::set_disconnect_snowflake(&state.user_id, &mut state.redis).await;
 		state.send_self_info().await;
 		state.send_game_state().await;
 		state.matchmake().await;
@@ -116,50 +116,61 @@ impl PlaySocket {
 	pub async fn disconnected(mut self: Self, close_message: &str, allow_reconnect: bool) {
 		// leave matchmaking queue immidiately to prevent getting matched while disconnected
 		Self::leave_matchmaking_queue(&self.user_id, &mut self.db).await;
-		close_socket(&mut self.socket, close_message.to_string()).await;
+		close_socket(self.socket, close_message.to_string()).await;
+		let user_id = self.user_id;
+		let mut redis = self.redis;
+		let mut db = self.db;
+		let state = self.state;
 		if allow_reconnect {
 			tokio::spawn(async move {
-				let disconnect_snowflake = self.set_disconnect_snowflake().await;
+				let disconnect_snowflake =
+					Self::set_disconnect_snowflake(&user_id, &mut redis).await;
 				tokio::time::sleep(Duration::from_secs(5)).await;
 				// if the snowflake changed during the sleep,
 				// another socket for the same player joined or left while we were sleeping.
 				// we will let that socket handle the cleanup
-				if let Some(new_snowflake) = self.get_disconnect_snowflake().await {
+				if let Some(new_snowflake) =
+					Self::get_disconnect_snowflake(&user_id, &mut redis).await
+				{
 					if new_snowflake == disconnect_snowflake {
 						// cleanup
-						self.cleanup(true).await;
+						Self::cleanup(state, &user_id, &mut redis, &mut db, false).await;
 					}
 				}
 			});
 		} else {
-			self.cleanup(false).await;
+			Self::cleanup(state, &user_id, &mut redis, &mut db, false).await;
 		}
 	}
-	async fn cleanup(&mut self, forfeit: bool) {
-		Self::leave_matchmaking_queue(&self.user_id, &mut self.db).await;
-		let _: usize = self
-			.redis
+	async fn cleanup(
+		state: PlaySocketState,
+		user_id: &str,
+		redis: &mut Connection<RedisPool>,
+		db: &mut Connection<PostgresPool>,
+		forfeit: bool,
+	) {
+		Self::leave_matchmaking_queue(user_id, db).await;
+		let _: usize = redis
 			.del(&[
-				format!("socket_state:{}", &self.user_id),
-				format!("matchmaking:{}", &self.user_id),
-				format!("disconnect_snowflake:{}", &self.user_id),
+				format!("socket_state:{}", user_id),
+				format!("matchmaking:{}", user_id),
+				format!("disconnect_snowflake:{}", user_id),
 			])
 			.await
 			.expect("redis error");
 		if let PlaySocketState::Game { game_id, .. }
-		| PlaySocketState::UnstartedGame { game_id, .. } = &self.state
+		| PlaySocketState::UnstartedGame { game_id, .. } = state
 		{
 			if forfeit {
 				// forfeit the game (game service handles game cleanup)
-				let _: () = self
-					.redis
+				let _: () = redis
 					.xadd_maxlen(
 						"game_requests",
 						redis::streams::StreamMaxlen::Approx(10000),
 						"*",
 						&[(
 							"forfeit",
-							&serde_json::to_string(&(&game_id, &self.user_id))
+							&serde_json::to_string(&(&game_id, user_id))
 								.expect("failed to serialize forfeit"),
 						)],
 					)
@@ -168,21 +179,23 @@ impl PlaySocket {
 			}
 		}
 	}
-	async fn set_disconnect_snowflake(&mut self) -> String {
+	async fn set_disconnect_snowflake(user_id: &str, redis: &mut Connection<RedisPool>) -> String {
 		let disconnect_snowflake = Uuid::new_v7(Timestamp::now(NoContext)).to_string();
-		let _: () = self
-			.redis
+		let _: () = redis
 			.set(
-				format!("disconnect_snowflake:{}", &self.user_id),
+				format!("disconnect_snowflake:{}", user_id),
 				&disconnect_snowflake,
 			)
 			.await
 			.expect("redis error");
 		return disconnect_snowflake;
 	}
-	async fn get_disconnect_snowflake(&mut self) -> Option<String> {
-		self.redis
-			.get::<String, String>(format!("disconnect_snowflake:{}", &self.user_id))
+	async fn get_disconnect_snowflake(
+		user_id: &str,
+		redis: &mut Connection<RedisPool>,
+	) -> Option<String> {
+		redis
+			.get::<String, String>(format!("disconnect_snowflake:{}", user_id))
 			.await
 			.ok()
 	}
