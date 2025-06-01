@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use duckchess_common::{
-	Board, ChatMessage, GameStart, Move, PlayRequest, PlayResponse, Player, Turn, TurnStart,
+	Board, BoardSetup, ChatMessage, GameStart, Move, PlayRequest, PlayResponse, Player, Turn,
+	TurnStart,
 };
 use rand::Rng;
 use redis::AsyncCommands;
@@ -31,9 +32,14 @@ pub struct PlaySocket {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub enum PlaySocketState {
+	WaitingForSetup,
 	Matchmaking {
 		elo: f32,
 		elo_range: f32,
+		setup: BoardSetup,
+	},
+	UnstartedGame {
+		game_id: String,
 	},
 	Game {
 		game_id: String,
@@ -65,21 +71,18 @@ impl PlaySocket {
 			},
 			None => {
 				// no cached state, create a new one
-				let elo = match sqlx::query("SELECT elo FROM users WHERE id = $1")
+				let count: i64 = sqlx::query("SELECT count(id) FROM users WHERE id = $1")
 					.bind(&user_id)
 					.fetch_one(&mut **db)
 					.await
-				{
-					Ok(row) => row,
-					Err(_) => return Err(("user not found".to_string(), socket)),
+					.expect("postgres error")
+					.get(0);
+				if count <= 0 {
+					return Err(("user not found".to_string(), socket));
 				}
-				.get(0);
 				let mut state = Self {
 					user_id,
-					state: PlaySocketState::Matchmaking {
-						elo,
-						elo_range: 200.0,
-					},
+					state: PlaySocketState::WaitingForSetup,
 					socket,
 					db,
 					redis,
@@ -138,7 +141,9 @@ impl PlaySocket {
 			])
 			.await
 			.expect("redis error");
-		if let PlaySocketState::Game { game_id, .. } = &self.state {
+		if let PlaySocketState::Game { game_id, .. } | PlaySocketState::UnstartedGame { game_id } =
+			&self.state
+		{
 			if forfeit {
 				// forfeit the game (game service handles game cleanup)
 				let _: () = self
@@ -185,7 +190,7 @@ impl PlaySocket {
 			.expect("redis error");
 	}
 	pub async fn matchmake(&mut self) {
-		if let PlaySocketState::Matchmaking { elo, elo_range } = &mut self.state {
+		if let PlaySocketState::Matchmaking { elo, elo_range, .. } = &mut self.state {
 			// find longest waiting player where they're in my elo range and im in theirs
 			// time complexity isnt a huge deal here because matchmaking_players will remain relatively small
 			let matched_player: String = match sqlx::query(
@@ -291,14 +296,11 @@ impl PlaySocket {
 				.await
 				.expect("postgres error");
 			self.matchmake().await;
+			self.save_state().await;
 		}
 	}
 	pub async fn matched(&mut self, game_id: String) {
-		self.state = PlaySocketState::Game {
-			game_id,
-			my_turn: false,
-			player: Player::Black,
-		};
+		self.state = PlaySocketState::UnstartedGame { game_id };
 		self.save_state().await;
 	}
 	pub async fn game_start(&mut self, game_start: String) {
@@ -391,6 +393,7 @@ impl PlaySocket {
 					if !*my_turn {
 						return;
 					}
+					*my_turn = false;
 					let _: () = self
 						.redis
 						.xadd_maxlen(
@@ -409,6 +412,7 @@ impl PlaySocket {
 						)
 						.await
 						.expect("redis error");
+					self.save_state().await;
 				}
 			}
 			PlayRequest::ChatMessage { message } => {
@@ -447,6 +451,26 @@ impl PlaySocket {
 				}
 			}
 			PlayRequest::ExpandEloRange => self.expand_elo_range().await,
+			PlayRequest::BoardSetup { setup } => {
+				if let PlaySocketState::WaitingForSetup = self.state {
+					if !setup.is_valid() {
+						return;
+					}
+					let elo: f32 = sqlx::query("SELECT elo FROM users WHERE id = $1")
+						.bind(&self.user_id)
+						.fetch_one(&mut **self.db)
+						.await
+						.expect("postgres error")
+						.get::<f32, usize>(0);
+					self.state = PlaySocketState::Matchmaking {
+						elo,
+						elo_range: 200.0,
+						setup,
+					};
+					self.matchmake().await;
+					self.save_state().await;
+				}
+			}
 		}
 	}
 	pub async fn send_game_state(&mut self) {

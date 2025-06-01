@@ -49,17 +49,18 @@ async fn play(
 				let last_id;
 				let stream_key;
 				let redis_stream: RedisFuture<StreamReadReply> = match &socket_state.state {
-					PlaySocketState::Matchmaking { .. } => {
-						stream_key = [format!("matchmaking:{}", socket_state.user_id)];
-						last_id = [match &last_matchmaking_message_id {
+					PlaySocketState::Game { game_id, .. }
+					| PlaySocketState::UnstartedGame { game_id } => {
+						stream_key = [format!("game:{}", &game_id)];
+						last_id = [match &last_game_message_id {
 							Some(id) => id.as_str(),
 							None => "$",
 						}];
 						redis.xread_options(&stream_key, &last_id, &stream_options)
 					}
-					PlaySocketState::Game { game_id, .. } => {
-						stream_key = [format!("game:{}", &game_id)];
-						last_id = [match &last_game_message_id {
+					_ => {
+						stream_key = [format!("matchmaking:{}", socket_state.user_id)];
+						last_id = [match &last_matchmaking_message_id {
 							Some(id) => id.as_str(),
 							None => "$",
 						}];

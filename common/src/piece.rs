@@ -293,3 +293,47 @@ impl Piece {
 		}
 	}
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(
+	crate = "rocket::serde",
+	rename_all = "camelCase",
+	rename_all_fields = "camelCase",
+	tag = "type"
+)]
+pub enum SetupPieceType {
+	King,
+	Queen,
+	Castle,
+	Bishop,
+	Knight,
+	Pawn,
+}
+
+impl From<SetupPieceType> for PieceType {
+	fn from(setup_piece: SetupPieceType) -> Self {
+		match setup_piece {
+			SetupPieceType::King => PieceType::King,
+			SetupPieceType::Queen => PieceType::Queen,
+			SetupPieceType::Castle => PieceType::Castle,
+			SetupPieceType::Bishop => PieceType::Bishop,
+			SetupPieceType::Knight => PieceType::Knight,
+			SetupPieceType::Pawn => PieceType::Pawn {
+				turns_since_double_advance: None,
+			},
+		}
+	}
+}
+
+impl SetupPieceType {
+	pub fn setup_value(&self) -> i32 {
+		match self {
+			SetupPieceType::King => 400,
+			SetupPieceType::Queen => 900,
+			SetupPieceType::Castle => 500,
+			SetupPieceType::Bishop => 300,
+			SetupPieceType::Knight => 300,
+			SetupPieceType::Pawn => 100,
+		}
+	}
+}

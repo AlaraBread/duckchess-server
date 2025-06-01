@@ -1,6 +1,6 @@
 use rocket::serde::{Deserialize, Serialize};
 
-use crate::{Board, Move, Player, Vec2};
+use crate::{Board, BoardSetup, Move, Player, Vec2};
 
 #[derive(Deserialize, Debug)]
 #[serde(
@@ -13,6 +13,7 @@ pub enum PlayRequest {
 	Turn { piece_idx: usize, move_idx: usize },
 	ChatMessage { message: String },
 	ExpandEloRange,
+	BoardSetup { setup: BoardSetup },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

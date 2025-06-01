@@ -1,9 +1,10 @@
-use std::ops::Not;
+use std::{mem::swap, ops::Not};
 
 use rocket::serde;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+	SetupPieceType,
 	piece::{Piece, PieceType},
 	vec2::Vec2,
 };
@@ -303,6 +304,51 @@ impl Board {
 		};
 		board.generate_moves(true);
 		board
+	}
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde", rename_all = "camelCase")]
+pub struct BoardSetup([[Option<SetupPieceType>; 8]; 2]);
+
+impl BoardSetup {
+	// when playing as black, we rotate the board setup
+	pub fn rotate(&mut self) {
+		// horizontal mirror
+		for y in 0..2 {
+			for x in 0..4 {
+				let [ref mut left, ref mut right] =
+					unsafe { self.0[y].get_disjoint_unchecked_mut([x, 7 - x]) };
+				swap(left, right);
+			}
+		}
+		// vertical mirror
+		let [ref mut bottom, ref mut top] = self.0;
+		swap(bottom, top);
+	}
+	fn total_value(&self) -> i32 {
+		let mut sum = 0;
+		for row in &self.0 {
+			for piece in row {
+				sum += piece.as_ref().map(|p| p.setup_value()).unwrap_or(0)
+			}
+		}
+		sum
+	}
+	fn contains_king(&self) -> bool {
+		for row in &self.0 {
+			for piece in row {
+				if let Some(SetupPieceType::King) = piece {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+	// standard setup + 500 (for fun)
+	const MAX_TOTAL_VALUE: i32 = 4800;
+	pub fn is_valid(&self) -> bool {
+		self.total_value() <= Self::MAX_TOTAL_VALUE && self.contains_king()
 	}
 }
 
