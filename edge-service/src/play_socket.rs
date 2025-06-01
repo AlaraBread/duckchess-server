@@ -1,10 +1,9 @@
 use std::time::Duration;
 
 use duckchess_common::{
-	Board, BoardSetup, ChatMessage, GameStart, Move, PlayRequest, PlayResponse, Player, Turn,
-	TurnStart,
+	Board, BoardSetup, ChatMessage, GameStart, GameStartPlayer, Move, PlayRequest, PlayResponse,
+	Player, Turn, TurnStart,
 };
-use rand::Rng;
 use redis::AsyncCommands;
 
 use rocket::serde::json::serde_json;
@@ -19,7 +18,7 @@ use rocket_db_pools::{Connection, sqlx};
 use uuid::{NoContext, Timestamp, Uuid};
 use ws::stream::DuplexStream;
 
-use crate::util::close_socket;
+use crate::util::{close_socket, randomly_permute_2};
 use crate::{PostgresPool, RedisPool};
 pub struct PlaySocket {
 	pub user_id: String,
@@ -190,11 +189,16 @@ impl PlaySocket {
 			.expect("redis error");
 	}
 	pub async fn matchmake(&mut self) {
-		if let PlaySocketState::Matchmaking { elo, elo_range, .. } = &mut self.state {
+		if let PlaySocketState::Matchmaking {
+			elo,
+			elo_range,
+			setup,
+		} = &mut self.state
+		{
 			// find longest waiting player where they're in my elo range and im in theirs
 			// time complexity isnt a huge deal here because matchmaking_players will remain relatively small
-			let matched_player: String = match sqlx::query(
-				"SELECT id FROM matchmaking_players WHERE \
+			let match_found = match sqlx::query(
+				"SELECT id, board_setup FROM matchmaking_players WHERE \
 				elo BETWEEN $1 AND $2 AND \
 				$3 BETWEEN elo - elo_range AND elo + elo_range AND \
 				id != $4 \
@@ -214,8 +218,10 @@ impl PlaySocket {
 						.await;
 					return;
 				}
-			}
-			.get(0);
+			};
+			let matched_player: String = match_found.get(0);
+			let matched_board_setup: BoardSetup = serde_json::from_str(match_found.get(1))
+				.expect("invalid board setup in matchmaking queue");
 			sqlx::query("DELETE FROM matchmaking_players WHERE id = $1 OR id = $2")
 				.bind(&matched_player)
 				.bind(&self.user_id)
@@ -234,10 +240,16 @@ impl PlaySocket {
 				)
 				.await
 				.expect("redis error");
-			let (white_player, black_player) = match rand::rng().random() {
-				true => (matched_player, self.user_id.clone()),
-				false => (self.user_id.clone(), matched_player),
-			};
+			let (white, black) = randomly_permute_2((
+				GameStartPlayer {
+					id: matched_player,
+					setup: matched_board_setup,
+				},
+				GameStartPlayer {
+					id: self.user_id.clone(),
+					setup: setup.clone(),
+				},
+			));
 			let _: () = self
 				.redis
 				.xadd_maxlen(
@@ -248,8 +260,8 @@ impl PlaySocket {
 						"game_start",
 						&serde_json::to_string(&GameStart {
 							game_id: game_id.clone(),
-							white_player,
-							black_player,
+							white,
+							black,
 						})
 						.expect("failed to serialize game start"),
 					)],
@@ -309,7 +321,7 @@ impl PlaySocket {
 		self.state = PlaySocketState::Game {
 			game_id: game_start.game_id,
 			my_turn: false,
-			player: match self.user_id == game_start.white_player {
+			player: match self.user_id == game_start.white.id {
 				true => Player::White,
 				false => Player::Black,
 			},

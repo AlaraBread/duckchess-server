@@ -254,7 +254,7 @@ impl Board {
 				});
 				x.map(|x| Vec2(x as i8, y as i8))
 			})
-			.unwrap()
+			.expect("already verified king exists")
 	}
 	pub fn get_king_position(&self, player: Player) -> Vec2 {
 		self.kings[match player {
@@ -268,19 +268,34 @@ impl Board {
 	pub fn get_tile_mut(&mut self, pos: Vec2) -> &mut Tile {
 		&mut self.board[pos.1 as usize][pos.0 as usize]
 	}
-	pub fn new(white_player: String, black_player: String, game_id: String) -> Self {
+	pub fn new(mut game_start: GameStart) -> Self {
+		let game_id = game_start.game_id;
+		let white_player = game_start.white.id;
+		let black_player = game_start.black.id;
+		game_start.black.setup.rotate();
 		let board = (0..8)
 			.into_iter()
-			.map(|i| {
+			.map(|y| {
 				(0..8)
 					.into_iter()
-					.map(|j| Tile {
-						floor: if (i + j) % 2 == 0 {
+					.map(|x| Tile {
+						floor: if (y + x) % 2 == 0 {
 							Floor::Light
 						} else {
 							Floor::Dark
 						},
-						piece: DEFAULT_BOARD[i][j].clone(),
+						piece: if y < 2 {
+							game_start.black.setup.0[y][x].clone().map(|p| p.into())
+						} else if y >= 6 {
+							game_start.white.setup.0[y - 6][x].clone().map(|p| p.into())
+						} else {
+							None
+						}
+						.map(|piece_type| Piece {
+							piece_type,
+							has_moved: false,
+							owner: if y < 4 { Player::Black } else { Player::White },
+						}),
 					})
 					.collect::<Vec<Tile>>()
 					.try_into()
@@ -316,15 +331,10 @@ impl BoardSetup {
 	pub fn rotate(&mut self) {
 		// horizontal mirror
 		for y in 0..2 {
-			for x in 0..4 {
-				let [ref mut left, ref mut right] =
-					unsafe { self.0[y].get_disjoint_unchecked_mut([x, 7 - x]) };
-				swap(left, right);
-			}
+			self.0[y].reverse();
 		}
 		// vertical mirror
-		let [ref mut bottom, ref mut top] = self.0;
-		swap(bottom, top);
+		self.0.reverse();
 	}
 	fn total_value(&self) -> i32 {
 		let mut sum = 0;
@@ -352,120 +362,17 @@ impl BoardSetup {
 	}
 }
 
-// put the client in charge of this at some point
-const DEFAULT_BOARD: [[Option<Piece>; 8]; 8] = [
-	[
-		Some(Piece {
-			piece_type: PieceType::Castle,
-			owner: Player::Black,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::Knight,
-			owner: Player::Black,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::Bishop,
-			owner: Player::Black,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::Queen,
-			owner: Player::Black,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::King,
-			owner: Player::Black,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::Bishop,
-			owner: Player::Black,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::Knight,
-			owner: Player::Black,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::Castle,
-			owner: Player::Black,
-			has_moved: false,
-		}),
-	],
-	[const {
-		Some(Piece {
-			piece_type: PieceType::Pawn {
-				turns_since_double_advance: None,
-			},
-			owner: Player::Black,
-			has_moved: false,
-		})
-	}; 8],
-	[const { None }; 8],
-	[const { None }; 8],
-	[const { None }; 8],
-	[const { None }; 8],
-	[const {
-		Some(Piece {
-			piece_type: PieceType::Pawn {
-				turns_since_double_advance: None,
-			},
-			owner: Player::White,
-			has_moved: false,
-		})
-	}; 8],
-	[
-		Some(Piece {
-			piece_type: PieceType::Castle,
-			owner: Player::White,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::Knight,
-			owner: Player::White,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::Bishop,
-			owner: Player::White,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::Queen,
-			owner: Player::White,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::King,
-			owner: Player::White,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::Bishop,
-			owner: Player::White,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::Knight,
-			owner: Player::White,
-			has_moved: false,
-		}),
-		Some(Piece {
-			piece_type: PieceType::Castle,
-			owner: Player::White,
-			has_moved: false,
-		}),
-	],
-];
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
 pub struct GameStart {
-	pub white_player: String,
-	pub black_player: String,
+	pub white: GameStartPlayer,
+	pub black: GameStartPlayer,
 	pub game_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
+pub struct GameStartPlayer {
+	pub id: String,
+	pub setup: BoardSetup,
 }

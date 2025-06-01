@@ -207,11 +207,8 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 	let game_start: GameStart =
 		serde_json::from_str(game_start_str).expect("failed to parse game start");
 	let board_key = format!("board:{}", game_start.game_id);
-	let board = Board::new(
-		game_start.white_player.clone(),
-		game_start.black_player,
-		game_start.game_id.clone(),
-	);
+	let game_id = game_start.game_id.clone();
+	let board = Board::new(game_start);
 	let _: () = con
 		.set(
 			&board_key,
@@ -221,7 +218,7 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 		.expect("failed to set board");
 	let _: String = con
 		.xadd_maxlen(
-			format!("game:{}", &game_start.game_id),
+			format!("game:{}", &game_id),
 			redis::streams::StreamMaxlen::Approx(1000),
 			"*",
 			&[
