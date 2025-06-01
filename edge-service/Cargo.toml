@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 rocket = { version = "0.5.1", features = ["json", "secrets"] }
+rocket_cors = "0.6.0"
 ws = { package = "rocket_ws", version = "0.1.1" }
 uuid = { version = "1.17.0", features = ["v7"] }
 rand = "0.9.1"

@@ -1,21 +1,23 @@
 mod play_socket;
 mod util;
 
+use crate::util::close_socket;
 use play_socket::{PlaySocket, PlaySocketState};
 use redis::streams::{StreamKey, StreamReadOptions, StreamReadReply};
 use redis::{AsyncCommands, RedisFuture};
 use rocket::futures::StreamExt;
-use rocket::serde::json::Json;
-use rocket::{Responder, Shutdown, get, launch, routes};
-
-use crate::util::close_socket;
+use rocket::http::Method;
 use rocket::http::{Cookie, CookieJar, SameSite};
+use rocket::serde::json::Json;
 use rocket::tokio;
+use rocket::{Responder, Shutdown, get, routes};
+use rocket_cors::{AllowedHeaders, AllowedOrigins};
 use rocket_db_pools::{
 	Connection, Database,
 	deadpool_redis::{self},
 	sqlx,
 };
+use std::error::Error;
 use uuid::{NoContext, Timestamp, Uuid};
 use ws::{Channel, WebSocket};
 
@@ -160,10 +162,23 @@ struct RedisPool(deadpool_redis::Pool);
 #[database("postgres")]
 struct PostgresPool(sqlx::PgPool);
 
-#[launch]
-fn rocket() -> _ {
-	rocket::build()
+#[rocket::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+	let allowed_origins = AllowedOrigins::some_exact(&["http://localhost:3000"]);
+	let cors = rocket_cors::CorsOptions {
+		allowed_origins,
+		allowed_methods: vec![Method::Get].into_iter().map(From::from).collect(),
+		allowed_headers: AllowedHeaders::some(&["Authorization", "Accept"]),
+		allow_credentials: true,
+		..Default::default()
+	}
+	.to_cors()?;
+	Ok(rocket::build()
 		.mount("/", routes![play, login])
+		.attach(cors)
 		.attach(RedisPool::init())
 		.attach(PostgresPool::init())
+		.launch()
+		.await
+		.map(|_| ())?)
 }
