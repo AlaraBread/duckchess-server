@@ -5,6 +5,7 @@ use play_socket::{PlaySocket, PlaySocketState};
 use redis::streams::{StreamKey, StreamReadOptions, StreamReadReply};
 use redis::{AsyncCommands, RedisFuture};
 use rocket::futures::StreamExt;
+use rocket::serde::json::Json;
 use rocket::{Responder, Shutdown, get, launch, post, routes};
 
 use crate::util::close_socket;
@@ -120,27 +121,29 @@ async fn play(
 }
 
 #[post("/login")]
-async fn login(cookies: &CookieJar<'_>, mut db: Connection<PostgresPool>) {
+async fn login(cookies: &CookieJar<'_>, mut db: Connection<PostgresPool>) -> Json<String> {
+	let id;
 	let id = match cookies.get_private("user_id") {
 		Some(id) => id.value().to_string(),
 		None => {
-			let id = Uuid::new_v7(Timestamp::now(NoContext)).to_string();
+			id = Uuid::new_v7(Timestamp::now(NoContext)).to_string();
 			sqlx::query("INSERT INTO users (id, elo) VALUES ($1, 1500) ON CONFLICT DO NOTHING")
 				.bind(&id)
 				.execute(&mut **db)
 				.await
 				.expect("postgres error");
-			id.clone()
+			id
 		}
 	};
 	cookies.add_private(
-		Cookie::build(("user_id", id))
+		Cookie::build(("user_id", id.clone()))
 			.http_only(true)
 			.permanent()
 			.same_site(SameSite::Lax)
 			.secure(true)
 			.build(),
 	);
+	Json(id)
 }
 
 #[derive(Responder)]
