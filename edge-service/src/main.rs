@@ -6,7 +6,7 @@ use redis::streams::{StreamKey, StreamReadOptions, StreamReadReply};
 use redis::{AsyncCommands, RedisFuture};
 use rocket::futures::StreamExt;
 use rocket::serde::json::Json;
-use rocket::{Responder, Shutdown, get, launch, post, routes};
+use rocket::{Responder, Shutdown, get, launch, routes};
 
 use crate::util::close_socket;
 use rocket::http::{Cookie, CookieJar, SameSite};
@@ -120,7 +120,7 @@ async fn play(
 	}))
 }
 
-#[post("/login")]
+#[get("/login")]
 async fn login(cookies: &CookieJar<'_>, mut db: Connection<PostgresPool>) -> Json<String> {
 	let id;
 	let id = match cookies.get_private("user_id") {
