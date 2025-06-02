@@ -41,10 +41,6 @@ pub enum PlaySocketState {
 		setup: BoardSetup,
 		last_message: Option<String>,
 	},
-	UnstartedGame {
-		game_id: String,
-		last_message: Option<String>,
-	},
 	Game {
 		game_id: String,
 		my_turn: bool,
@@ -153,14 +149,12 @@ impl PlaySocket {
 		let _: usize = redis
 			.del(&[
 				format!("socket_state:{}", user_id),
-				format!("matchmaking:{}", user_id),
+				format!("user:{}", user_id),
 				format!("disconnect_snowflake:{}", user_id),
 			])
 			.await
 			.expect("redis error");
-		if let PlaySocketState::Game { game_id, .. }
-		| PlaySocketState::UnstartedGame { game_id, .. } = state
-		{
+		if let PlaySocketState::Game { game_id, .. } = state {
 			if forfeit {
 				// forfeit the game (game service handles game cleanup)
 				let _: () = redis
@@ -232,10 +226,16 @@ impl PlaySocket {
 			.await
 			{
 				Ok(row) => row,
-				Err(_) => {
+				Err(e) => {
 					// no match
-					Self::enter_matchmaking_queue(&self.user_id, &mut self.db, *elo, *elo_range)
-						.await;
+					Self::enter_matchmaking_queue(
+						&self.user_id,
+						&setup,
+						&mut self.db,
+						*elo,
+						*elo_range,
+					)
+					.await;
 					return;
 				}
 			};
@@ -250,16 +250,6 @@ impl PlaySocket {
 				.expect("postgres error");
 			let game_id = Uuid::new_v7(Timestamp::now(NoContext)).to_string();
 			// let the other player know they just got matched
-			let _: () = self
-				.redis
-				.xadd_maxlen(
-					format!("matchmaking:{}", matched_player),
-					redis::streams::StreamMaxlen::Approx(1000),
-					"*",
-					&[("match", &game_id)],
-				)
-				.await
-				.expect("redis error");
 			let (white, black) = randomly_permute_2((
 				GameStartPlayer {
 					id: matched_player,
@@ -288,11 +278,11 @@ impl PlaySocket {
 				)
 				.await
 				.expect("redis error");
-			self.matched(game_id).await;
 		}
 	}
 	async fn enter_matchmaking_queue(
 		user_id: &str,
+		board_setup: &BoardSetup,
 		db: &mut Connection<PostgresPool>,
 		elo: f32,
 		elo_range: f32,
@@ -300,13 +290,14 @@ impl PlaySocket {
 		Self::leave_matchmaking_queue(user_id, db).await;
 		sqlx::query(
 			"INSERT INTO matchmaking_players \
-						(id, elo, elo_range, start_time) \
-						VALUES ($1, $2, $3, $4)",
+						(id, elo, elo_range, start_time, board_setup) \
+						VALUES ($1, $2, $3, $4, $5)",
 		)
 		.bind(&user_id)
 		.bind(elo)
 		.bind(elo_range)
 		.bind(OffsetDateTime::now_utc())
+		.bind(serde_json::to_string(board_setup).expect("failed to serialize board setup"))
 		.execute(&mut ***db)
 		.await
 		.expect("postgres error");
@@ -330,27 +321,22 @@ impl PlaySocket {
 			self.matchmake().await;
 		}
 	}
-	pub async fn matched(&mut self, game_id: String) {
-		self.state = PlaySocketState::UnstartedGame {
-			game_id,
-			last_message: None,
-		};
-	}
 	pub async fn game_start(&mut self, game_start: String) {
-		if let PlaySocketState::UnstartedGame { last_message, .. } = &self.state {
-			let game_start: GameStart =
-				serde_json::from_str(&game_start).expect("failed to parse game start");
-			self.state = PlaySocketState::Game {
-				game_id: game_start.game_id,
-				my_turn: false,
-				player: match self.user_id == game_start.white.id {
-					true => Player::White,
-					false => Player::Black,
-				},
-				last_message: last_message.clone(),
-			};
-			self.send_game_state().await;
-		}
+		let game_start: GameStart =
+			serde_json::from_str(&game_start).expect("failed to parse game start");
+		self.state = PlaySocketState::Game {
+			game_id: game_start.game_id,
+			my_turn: false,
+			player: match self.user_id == game_start.white.id {
+				true => Player::White,
+				false => Player::Black,
+			},
+			last_message: match &self.state {
+				PlaySocketState::Game { last_message, .. } => last_message.clone(),
+				_ => None,
+			},
+		};
+		self.send_game_state().await;
 	}
 	pub async fn turn_start(&mut self, turn_start: String) {
 		let turn_start: TurnStart =
@@ -503,6 +489,7 @@ impl PlaySocket {
 						last_message: None,
 					};
 					self.matchmake().await;
+					self.save_state().await;
 				}
 			}
 		}
@@ -512,33 +499,32 @@ impl PlaySocket {
 			PlaySocketState::Matchmaking { last_message, .. }
 			| PlaySocketState::WaitingForSetup { last_message } => {
 				*last_message = Some(message.id.clone());
-				if let Some(game_id) = message.get::<String>("match") {
-					self.matched(game_id).await;
-				}
-				false
+				self.process_stream_message(message).await
 			}
-			PlaySocketState::Game { last_message, .. }
-			| PlaySocketState::UnstartedGame { last_message, .. } => {
+			PlaySocketState::Game { last_message, .. } => {
 				*last_message = Some(message.id.clone());
-				if let Some(game_start) = message.get::<String>("game_start") {
-					self.game_start(game_start).await;
-				}
-				if let Some(turn_start) = message.get::<String>("turn_start") {
-					self.turn_start(turn_start).await;
-				}
-				if let Some(moves) = message.get::<String>("moves") {
-					self.moves_recieved(moves).await;
-				}
-				if let Some(chat) = message.get::<String>("chat") {
-					self.chat_recieved(chat).await;
-				}
-				if let Some(winner) = message.get::<String>("end") {
-					self.game_end(winner).await;
-					false
-				} else {
-					true
-				}
+				self.process_stream_message(message).await
 			}
+		}
+	}
+	async fn process_stream_message(&mut self, message: StreamId) -> bool {
+		if let Some(game_start) = message.get::<String>("game_start") {
+			self.game_start(game_start).await;
+		}
+		if let Some(turn_start) = message.get::<String>("turn_start") {
+			self.turn_start(turn_start).await;
+		}
+		if let Some(moves) = message.get::<String>("moves") {
+			self.moves_recieved(moves).await;
+		}
+		if let Some(chat) = message.get::<String>("chat") {
+			self.chat_recieved(chat).await;
+		}
+		if let Some(winner) = message.get::<String>("end") {
+			self.game_end(winner).await;
+			false
+		} else {
+			true
 		}
 	}
 	pub async fn send_game_state(&mut self) {

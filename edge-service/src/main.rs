@@ -54,21 +54,17 @@ async fn play(
 						game_id,
 						last_message,
 						..
-					}
-					| PlaySocketState::UnstartedGame {
-						game_id,
-						last_message,
 					} => {
 						stream_key = [format!("game:{}", &game_id)];
 						last_id = [match &last_message {
 							Some(id) => id.as_str(),
-							None => "$",
+							None => "0-0",
 						}];
 						redis.xread_options(&stream_key, &last_id, &stream_options)
 					}
 					PlaySocketState::Matchmaking { last_message, .. }
 					| PlaySocketState::WaitingForSetup { last_message, .. } => {
-						stream_key = [format!("matchmaking:{}", socket_state.user_id)];
+						stream_key = [format!("user:{}", socket_state.user_id)];
 						last_id = [match &last_message {
 							Some(id) => id.as_str(),
 							None => "$",
@@ -142,7 +138,7 @@ async fn login(cookies: &CookieJar<'_>, mut db: Connection<PostgresPool>) -> Jso
 			.http_only(true)
 			.permanent()
 			.same_site(SameSite::Lax)
-			.secure(true)
+			.secure(false) // TODO: set this to true for release
 			.build(),
 	);
 	Json(id)

@@ -62,7 +62,6 @@ pub enum MoveType {
 	EnPassant,
 	Promotion { into: PieceType },
 	Castle { from: Vec2, to: Vec2 },
-	TurnEnd,
 }
 
 impl Move {
@@ -152,21 +151,13 @@ impl Board {
 			),
 			_ => {}
 		}
-		output_moves.push(Move {
-			move_type: MoveType::TurnEnd,
-			from: Vec2(-1, -1),
-			to: Vec2(-1, -1),
-		});
 		for move_ in output_moves.iter() {
 			self.do_move(move_);
 		}
+		self.post_turn();
 		return Some(output_moves);
 	}
 	pub fn do_move(&mut self, mov: &Move) -> () {
-		if let MoveType::TurnEnd = mov.move_type {
-			self.post_turn();
-			return;
-		}
 		let start = mov.from;
 		let end = mov.to;
 		let mut piece = self.get_tile(start).piece.clone();

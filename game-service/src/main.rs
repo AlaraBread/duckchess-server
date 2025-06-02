@@ -208,6 +208,8 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 		serde_json::from_str(game_start_str).expect("failed to parse game start");
 	let board_key = format!("board:{}", game_start.game_id);
 	let game_id = game_start.game_id.clone();
+	let white_id = game_start.white.id.clone();
+	let black_id = game_start.black.id.clone();
 	let board = Board::new(game_start);
 	let _: () = con
 		.set(
@@ -216,26 +218,45 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 		)
 		.await
 		.expect("failed to set board");
+	let message = [
+		("game_start", game_start_str),
+		(
+			"turn_start",
+			&serde_json::to_string(&TurnStart {
+				turn: Player::White,
+				move_pieces: board.move_pieces,
+				moves: board.moves,
+			})
+			.expect("failed to serialize turn start"),
+		),
+	];
 	let _: String = con
 		.xadd_maxlen(
 			format!("game:{}", &game_id),
 			redis::streams::StreamMaxlen::Approx(1000),
 			"*",
-			&[
-				("game_start", game_start_str),
-				(
-					"turn_start",
-					&serde_json::to_string(&TurnStart {
-						turn: Player::White,
-						move_pieces: board.move_pieces,
-						moves: board.moves,
-					})
-					.expect("failed to serialize turn start"),
-				),
-			],
+			&message,
 		)
 		.await
 		.expect("failed to write to game stream");
+	let _: String = con
+		.xadd_maxlen(
+			format!("user:{}", &black_id),
+			redis::streams::StreamMaxlen::Approx(1000),
+			"*",
+			&message,
+		)
+		.await
+		.expect("failed to write to user stream");
+	let _: String = con
+		.xadd_maxlen(
+			format!("user:{}", &white_id),
+			redis::streams::StreamMaxlen::Approx(1000),
+			"*",
+			&message,
+		)
+		.await
+		.expect("failed to write to user stream");
 }
 
 async fn process_forfeit(con: &mut MultiplexedConnection, (game_id, player_id): (String, String)) {
