@@ -226,7 +226,7 @@ impl PlaySocket {
 			.await
 			{
 				Ok(row) => row,
-				Err(e) => {
+				Err(_) => {
 					// no match
 					Self::enter_matchmaking_queue(
 						&self.user_id,
@@ -530,11 +530,19 @@ impl PlaySocket {
 	pub async fn send_game_state(&mut self) {
 		if let PlaySocketState::Game { game_id, .. } = &mut self.state {
 			let board: Board = serde_json::from_str(
-				&self
+				match &self
 					.redis
 					.get::<String, String>(format!("board:{}", game_id))
 					.await
-					.expect("redis error"),
+				{
+					Ok(v) => v,
+					Err(_) => {
+						// game doesnt exist
+						self.state = PlaySocketState::WaitingForSetup { last_message: None };
+						self.save_state().await;
+						return;
+					}
+				},
 			)
 			.expect("failed to deserialize board");
 			let _ = self
