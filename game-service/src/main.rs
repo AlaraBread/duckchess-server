@@ -1,16 +1,17 @@
 use std::{
 	any::type_name,
-	collections::HashMap,
+	collections::{HashMap, VecDeque},
 	env,
 	str::FromStr,
 	sync::{
 		Arc,
 		atomic::{AtomicBool, Ordering},
 	},
+	time::{Duration, Instant},
 };
 
 use dotenvy::dotenv;
-use duckchess_common::{Board, GameStart, Player, Turn, TurnStart};
+use duckchess_common::{Board, ChatMessage, GameStart, Player, Turn, TurnStart};
 use redis::{
 	AsyncCommands,
 	aio::MultiplexedConnection,
@@ -21,6 +22,9 @@ use redis::{
 };
 use rocket::serde::json::serde_json;
 use std::fmt::Debug;
+use tokio::time::sleep;
+
+type DeleteGameQueue = VecDeque<(String, Instant)>;
 
 #[tokio::main]
 async fn main() {
@@ -51,6 +55,7 @@ async fn main() {
 		.xgroup_create_mkstream("game_requests", &consumer_group, "$")
 		.await;
 
+	let mut delete_game_queue: DeleteGameQueue = VecDeque::new();
 	loop {
 		// autoclaim unacked messages
 		let mut last_claimed_message: Option<String> = None;
@@ -70,7 +75,7 @@ async fn main() {
 				.await
 				.expect("failed to autoclaim");
 			for stream_id in autoclaim_result.claimed.iter() {
-				process_stream_id(&mut con, stream_id).await;
+				process_stream_id(&mut con, &mut delete_game_queue, stream_id).await;
 			}
 			ack_messages(&mut con, &consumer_group, autoclaim_result.claimed).await;
 			last_claimed_message = Some(autoclaim_result.next_stream_id.clone());
@@ -92,7 +97,7 @@ async fn main() {
 			.expect("Failed to read from stream");
 		for StreamKey { ids, .. } in keys.iter() {
 			for stream_id in ids.iter() {
-				process_stream_id(&mut con, stream_id).await;
+				process_stream_id(&mut con, &mut delete_game_queue, stream_id).await;
 			}
 		}
 		ack_messages(
@@ -103,7 +108,21 @@ async fn main() {
 				.collect(),
 		)
 		.await;
+		let mut i = 0;
+		while i < delete_game_queue.len() {
+			let (id, time) = &delete_game_queue[i];
+			if Instant::now() > *time {
+				cleanup_game(&mut con, id).await;
+				delete_game_queue.remove(i);
+			} else {
+				i += 1;
+			}
+		}
 		if should_exit.load(Ordering::Relaxed) {
+			while let Some((id, time)) = delete_game_queue.pop_back() {
+				sleep(Instant::now().duration_since(time)).await;
+				cleanup_game(&mut con, &id).await;
+			}
 			break;
 		}
 	}
@@ -142,29 +161,40 @@ where
 	))
 }
 
-async fn process_stream_id(con: &mut MultiplexedConnection, stream_id: &StreamId) {
+async fn process_stream_id(
+	con: &mut MultiplexedConnection,
+	delete_game_queue: &mut DeleteGameQueue,
+	stream_id: &StreamId,
+) {
 	if let Some(game_id) = stream_id.get::<String>("game_start") {
-		process_game_start(con, game_id.as_str()).await;
+		process_game_start(con, delete_game_queue, game_id.as_str()).await;
 	}
 	if let Some(turn) = stream_id.get::<String>("turn") {
-		process_turn(con, turn.as_str()).await;
+		process_turn(con, delete_game_queue, turn.as_str()).await;
 	}
 	if let Some(forfeit) = stream_id.get::<String>("forfeit") {
 		process_forfeit(
 			con,
+			delete_game_queue,
 			serde_json::from_str(&forfeit).expect("failed to parse forfeit"),
 		)
 		.await;
 	}
 }
 
-async fn process_turn(con: &mut MultiplexedConnection, turn: &str) {
+async fn process_turn(
+	con: &mut MultiplexedConnection,
+	delete_game_queue: &mut DeleteGameQueue,
+	turn: &str,
+) {
 	let turn: Turn = serde_json::from_str(turn).expect("failed to parse turn");
 	let board_key = format!("board:{}", turn.game_id);
 	let board_str: String = con.get(&board_key).await.expect("failed to get board");
 	let mut board: Board = serde_json::from_str(board_str.as_str()).expect("failed to parse board");
-	let computed_moves = board.evaluate_turn(&turn).unwrap();
-	board.generate_moves(true);
+	let (computed_moves, game_over) = match board.evaluate_turn(&turn) {
+		Some(o) => o,
+		None => return,
+	};
 	let _: () = con
 		.set(&board_key, serde_json::to_string(&board).unwrap())
 		.await
@@ -189,21 +219,16 @@ async fn process_turn(con: &mut MultiplexedConnection, turn: &str) {
 		)
 		.await
 		.expect("Failed to write to moves stream");
-	if board.moves.is_empty() {
-		let _: () = con
-			.xadd_maxlen(
-				format!("game:{}", turn.game_id),
-				redis::streams::StreamMaxlen::Approx(1000),
-				"*",
-				&[("end", board.get_not_turn_player_id())],
-			)
-			.await
-			.expect("failed to write to game stream");
-		cleanup_game(con, &turn.game_id).await;
+	if game_over {
+		end_game(con, delete_game_queue, &board, &board.get_turn_player_id()).await;
 	}
 }
 
-async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &str) {
+async fn process_game_start(
+	con: &mut MultiplexedConnection,
+	delete_game_queue: &mut DeleteGameQueue,
+	game_start_str: &str,
+) {
 	let game_start: GameStart =
 		serde_json::from_str(game_start_str).expect("failed to parse game start");
 	let board_key = format!("board:{}", game_start.game_id);
@@ -224,8 +249,8 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 			"turn_start",
 			&serde_json::to_string(&TurnStart {
 				turn: Player::White,
-				move_pieces: board.move_pieces,
-				moves: board.moves,
+				move_pieces: board.move_pieces.clone(),
+				moves: board.moves.clone(),
 			})
 			.expect("failed to serialize turn start"),
 		),
@@ -257,32 +282,61 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 		)
 		.await
 		.expect("failed to write to user stream");
+	if board.moves.is_empty() {
+		end_game(con, delete_game_queue, &board, &board.black_player).await;
+	}
 }
 
-async fn process_forfeit(con: &mut MultiplexedConnection, (game_id, player_id): (String, String)) {
+async fn process_forfeit(
+	con: &mut MultiplexedConnection,
+	delete_game_queue: &mut DeleteGameQueue,
+	(game_id, player_id): (String, String),
+) {
 	let board_key = format!("board:{}", game_id);
 	let board_str: String = match con.get(&board_key).await {
 		Ok(board_str) => board_str,
 		Err(_) => return,
 	};
 	let board: Board = serde_json::from_str(board_str.as_str()).expect("failed to parse board");
+	let winner = if board.white_player == player_id {
+		board.black_player.clone()
+	} else {
+		board.white_player.clone()
+	};
+	end_game(con, delete_game_queue, &board, &winner).await;
+}
+
+async fn end_game(
+	con: &mut MultiplexedConnection,
+	delete_game_queue: &mut DeleteGameQueue,
+	board: &Board,
+	winner: &str,
+) {
+	let chat_message = ChatMessage {
+		id: "".to_string(),
+		message: format!(
+			"{} wins",
+			if board.white_player == winner {
+				"white"
+			} else {
+				"black"
+			}
+		),
+	};
+	let message = serde_json::to_string(&chat_message).expect("failed to serialize chat message");
 	let _: () = con
 		.xadd_maxlen(
-			format!("game:{}", game_id),
+			format!("game:{}", board.id),
 			redis::streams::StreamMaxlen::Approx(1000),
 			"*",
-			&[(
-				"end",
-				if player_id == board.white_player {
-					board.black_player
-				} else {
-					board.white_player
-				},
-			)],
+			&[("chat", message.as_str()), ("end", winner)],
 		)
 		.await
 		.expect("failed to write to game stream");
-	cleanup_game(con, &game_id).await;
+	delete_game_queue.push_front((
+		board.id.clone(),
+		Instant::now().checked_add(Duration::from_secs(5)).unwrap(),
+	));
 }
 
 async fn cleanup_game(con: &mut MultiplexedConnection, game_id: &str) {

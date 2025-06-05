@@ -129,9 +129,10 @@ pub struct Turn {
 
 // do moves
 impl Board {
-	pub fn evaluate_turn(&mut self, turn: &Turn) -> Option<Vec<Move>> {
+	pub fn evaluate_turn(&mut self, turn: &Turn) -> Option<(Vec<Move>, bool)> {
 		let in_move = self.moves.get(turn.piece_idx)?.get(turn.move_idx)?.clone();
 		let mut output_moves = vec![in_move.clone()];
+		let mut game_over = false;
 		match in_move.move_type {
 			MoveType::EnPassant => output_moves.insert(
 				0,
@@ -152,12 +153,13 @@ impl Board {
 			_ => {}
 		}
 		for move_ in output_moves.iter() {
-			self.do_move(move_);
+			game_over = game_over || self.do_move(move_);
 		}
 		self.post_turn();
-		return Some(output_moves);
+		self.generate_moves(true);
+		return Some((output_moves, game_over || self.moves.len() <= 0));
 	}
-	pub fn do_move(&mut self, mov: &Move) -> () {
+	pub fn do_move(&mut self, mov: &Move) -> bool {
 		let start = mov.from;
 		let end = mov.to;
 		let mut piece = self.get_tile(start).piece.clone();
@@ -197,10 +199,24 @@ impl Board {
 			}
 			_ => {}
 		}
-		self.get_tile_mut(end).piece = piece;
-		if start != end {
+		let game_over = if start != end {
 			self.get_tile_mut(start).piece = Default::default();
-		}
+			if let Some(Piece {
+				piece_type: PieceType::King,
+				..
+			}) = self.get_tile(end).piece
+			{
+				// this cant happen with a standard setup,
+				// but if the setup has a king capture in the first move, it can
+				true
+			} else {
+				false
+			}
+		} else {
+			false
+		};
+		self.get_tile_mut(end).piece = piece;
+		game_over
 	}
 	fn post_turn(&mut self) {
 		for y in 0..8 {
@@ -210,10 +226,7 @@ impl Board {
 				}
 			}
 		}
-		self.turn = match self.turn {
-			Player::White => Player::Black,
-			Player::Black => Player::White,
-		};
+		self.turn = !self.turn;
 	}
 }
 
