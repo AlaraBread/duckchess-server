@@ -45,65 +45,75 @@ async fn main() {
 		.await
 		.expect("couldnt connect to redis");
 
-	// Create consumer group if it doesn't exist
-	let _create_group_result: Result<(), redis::RedisError> = con
-		.xgroup_create_mkstream("game_requests", &consumer_group, "$")
-		.await;
+	'start: loop {
+		// Create consumer group if it doesn't exist
+		let _create_group_result: Result<(), redis::RedisError> = con
+			.xgroup_create_mkstream("game_requests", &consumer_group, "$")
+			.await;
 
-	loop {
-		// autoclaim unacked messages
-		let mut last_claimed_message: Option<String> = None;
 		loop {
-			let autoclaim_result: StreamAutoClaimReply = con
-				.xautoclaim_options(
-					"game_requests",
-					&consumer_group,
-					&consumer_id,
-					autoclaim_time,
-					match &last_claimed_message {
-						Some(id) => id.as_str(),
-						None => "0-0",
-					},
-					StreamAutoClaimOptions::default(),
+			// autoclaim unacked messages
+			let mut last_claimed_message: Option<String> = None;
+			loop {
+				if let Ok(autoclaim_result) = con
+					.xautoclaim_options::<&str, &str, &str, u64, &str, StreamAutoClaimReply>(
+						"game_requests",
+						&consumer_group,
+						&consumer_id,
+						autoclaim_time,
+						match &last_claimed_message {
+							Some(id) => id.as_str(),
+							None => "0-0",
+						},
+						StreamAutoClaimOptions::default(),
+					)
+					.await
+				{
+					for stream_id in autoclaim_result.claimed.iter() {
+						process_stream_id(&mut con, stream_id).await;
+					}
+					ack_messages(&mut con, &consumer_group, autoclaim_result.claimed).await;
+					last_claimed_message = Some(autoclaim_result.next_stream_id.clone());
+					if autoclaim_result.next_stream_id == "0-0" {
+						break;
+					}
+				} else {
+					println!("game requests doesnt exist");
+					continue 'start;
+				}
+			}
+			// read new messages
+			if let Ok(StreamReadReply { keys }) = con
+				.xread_options(
+					&["game_requests"],
+					&[">"],
+					&StreamReadOptions::default()
+						.count(100)
+						.block(1000)
+						.group(&consumer_group, "todo"),
 				)
 				.await
-				.expect("failed to autoclaim");
-			for stream_id in autoclaim_result.claimed.iter() {
-				process_stream_id(&mut con, stream_id).await;
+			{
+				for StreamKey { ids, .. } in keys.iter() {
+					for stream_id in ids.iter() {
+						process_stream_id(&mut con, stream_id).await;
+					}
+				}
+				ack_messages(
+					&mut con,
+					&consumer_group,
+					keys.into_iter()
+						.flat_map(|StreamKey { ids, .. }| ids.into_iter())
+						.collect(),
+				)
+				.await;
+			} else {
+				println!("game requests doesnt exist");
+				continue 'start;
 			}
-			ack_messages(&mut con, &consumer_group, autoclaim_result.claimed).await;
-			last_claimed_message = Some(autoclaim_result.next_stream_id.clone());
-			if autoclaim_result.next_stream_id == "0-0" {
-				break;
+			if should_exit.load(Ordering::Relaxed) {
+				break 'start;
 			}
-		}
-		// read new messages
-		let StreamReadReply { keys } = con
-			.xread_options(
-				&["game_requests"],
-				&[">"],
-				&StreamReadOptions::default()
-					.count(100)
-					.block(1000)
-					.group(&consumer_group, "todo"),
-			)
-			.await
-			.expect("Failed to read from stream");
-		for StreamKey { ids, .. } in keys.iter() {
-			for stream_id in ids.iter() {
-				process_stream_id(&mut con, stream_id).await;
-			}
-		}
-		ack_messages(
-			&mut con,
-			&consumer_group,
-			keys.into_iter()
-				.flat_map(|StreamKey { ids, .. }| ids.into_iter())
-				.collect(),
-		)
-		.await;
-		if should_exit.load(Ordering::Relaxed) {
-			break;
 		}
 	}
 }
