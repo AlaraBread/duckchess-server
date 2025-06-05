@@ -93,21 +93,9 @@ impl PlaySocket {
 			}
 		};
 		Self::set_disconnect_snowflake(&state.user_id, &mut state.redis).await;
-		state.send_self_info().await;
 		state.send_game_state().await;
 		state.matchmake().await;
 		Ok(state)
-	}
-	async fn send_self_info(&mut self) {
-		let _ = self
-			.socket
-			.send(ws::Message::Text(
-				serde_json::to_string(&PlayResponse::SelfInfo {
-					id: self.user_id.clone(),
-				})
-				.expect("failed to serialize self info"),
-			))
-			.await;
 	}
 	pub async fn disconnected(
 		mut self: Self,

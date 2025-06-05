@@ -26,10 +26,6 @@ pub enum PlayRequest {
 )]
 pub enum PlayResponse {
 	InvalidRequest,
-	SelfInfo {
-		// the reciever's player id
-		id: String,
-	},
 	GameState {
 		board: Board,
 	},
