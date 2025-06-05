@@ -191,7 +191,7 @@ async fn process_turn(con: &mut MultiplexedConnection, turn: &str) {
 		.await
 		.expect("Failed to write to moves stream");
 	if game_over {
-		end_game(con, &board, &board.get_turn_player_id()).await;
+		end_game(con, &board, &board.get_not_turn_player_id()).await;
 	}
 }
 
@@ -250,7 +250,7 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 		.await
 		.expect("failed to write to user stream");
 	if board.moves.is_empty() {
-		end_game(con, &board, &board.black_player).await;
+		end_game(con, &board, &board.white_player).await;
 	}
 }
 
