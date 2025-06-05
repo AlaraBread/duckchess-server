@@ -349,20 +349,21 @@ impl BoardSetup {
 		}
 		sum
 	}
-	fn contains_king(&self) -> bool {
+	fn count_kings(&self) -> i32 {
+		let mut count = 0;
 		for row in &self.0 {
 			for piece in row {
 				if let Some(SetupPieceType::King) = piece {
-					return true;
+					count += 1;
 				}
 			}
 		}
-		return false;
+		return count;
 	}
 	// standard setup + 500 (for fun)
 	const MAX_TOTAL_VALUE: i32 = 4800;
 	pub fn is_valid(&self) -> bool {
-		self.total_value() <= Self::MAX_TOTAL_VALUE && self.contains_king()
+		self.total_value() <= Self::MAX_TOTAL_VALUE && self.count_kings() == 1
 	}
 }
 

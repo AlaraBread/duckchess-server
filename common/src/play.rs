@@ -14,6 +14,7 @@ pub enum PlayRequest {
 	ChatMessage { message: String },
 	ExpandEloRange,
 	BoardSetup { setup: BoardSetup },
+	Surrender,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

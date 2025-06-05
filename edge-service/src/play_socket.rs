@@ -109,7 +109,12 @@ impl PlaySocket {
 			))
 			.await;
 	}
-	pub async fn disconnected(mut self: Self, close_message: &str, allow_reconnect: bool) {
+	pub async fn disconnected(
+		mut self: Self,
+		close_message: &str,
+		allow_reconnect: bool,
+		surrender: bool,
+	) {
 		// leave matchmaking queue immidiately to prevent getting matched while disconnected
 		Self::leave_matchmaking_queue(&self.user_id, &mut self.db).await;
 		close_socket(self.socket, close_message.to_string()).await;
@@ -130,12 +135,12 @@ impl PlaySocket {
 				{
 					if new_snowflake == disconnect_snowflake {
 						// cleanup
-						Self::cleanup(state, &user_id, &mut redis, &mut db, false).await;
+						Self::cleanup(state, &user_id, &mut redis, &mut db, surrender).await;
 					}
 				}
 			});
 		} else {
-			Self::cleanup(state, &user_id, &mut redis, &mut db, false).await;
+			Self::cleanup(state, &user_id, &mut redis, &mut db, surrender).await;
 		}
 	}
 	async fn cleanup(
@@ -406,10 +411,10 @@ impl PlaySocket {
 			.await;
 	}
 	// handle message from user
-	pub async fn handle_message(&mut self, message: &str) {
+	pub async fn handle_message(&mut self, message: &str) -> bool {
 		let message: PlayRequest = match serde_json::from_str(message) {
 			Ok(message) => message,
-			Err(_) => return,
+			Err(_) => return false,
 		};
 		match message {
 			PlayRequest::Turn {
@@ -421,7 +426,7 @@ impl PlaySocket {
 				} = &mut self.state
 				{
 					if !*my_turn {
-						return;
+						return false;
 					}
 					*my_turn = false;
 					let _: () = self
@@ -447,7 +452,7 @@ impl PlaySocket {
 			}
 			PlayRequest::ChatMessage { message } => {
 				if message.len() > 1024 {
-					return;
+					return false;
 				}
 				if let PlaySocketState::Game { game_id, .. } = &self.state {
 					let chat_message = ChatMessage {
@@ -484,7 +489,7 @@ impl PlaySocket {
 			PlayRequest::BoardSetup { setup } => {
 				if let PlaySocketState::WaitingForSetup { .. } = self.state {
 					if !setup.is_valid() {
-						return;
+						return false;
 					}
 					let elo: f32 = sqlx::query("SELECT elo FROM users WHERE id = $1")
 						.bind(&self.user_id)
@@ -502,7 +507,13 @@ impl PlaySocket {
 					self.save_state().await;
 				}
 			}
+			PlayRequest::Surrender => {
+				if let PlaySocketState::Game { .. } = &self.state {
+					return true;
+				}
+			}
 		}
+		false
 	}
 	pub async fn process_stream_id(&mut self, message: StreamId) -> bool {
 		match &mut self.state {

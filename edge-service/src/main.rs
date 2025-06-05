@@ -46,6 +46,7 @@ async fn play(
 			let mut redis = socket_state.redis.clone();
 			let close_message;
 			let allow_reconnect;
+			let surrender;
 			'main_loop: loop {
 				let last_id;
 				let stream_key;
@@ -76,11 +77,17 @@ async fn play(
 					Some(Ok(message)) = socket_state.socket.next() => {
 						match message {
 							ws::Message::Text(text) => {
-								socket_state.handle_message(&text).await;
+								if socket_state.handle_message(&text).await {
+									close_message = "game surrendered";
+									allow_reconnect = false;
+									surrender = true;
+									break;
+								}
 							}
 							ws::Message::Close(_) => {
 								close_message = "client disconnected";
 								allow_reconnect = true;
+								surrender = true;
 								break;
 							}
 							_ => {}
@@ -92,6 +99,7 @@ async fn play(
 								if !socket_state.process_stream_id(message).await {
 									close_message = "game ended";
 									allow_reconnect = false;
+									surrender = false;
 									break 'main_loop;
 								}
 							}
@@ -101,17 +109,19 @@ async fn play(
 					_ = &mut end => {
 						close_message = "server closed";
 						allow_reconnect = true;
+						surrender = false;
 						break;
 					}
 					else => {
 						close_message = "client disconnected";
 						allow_reconnect = true;
+						surrender = true;
 						break;
 					}
 				}
 			}
 			socket_state
-				.disconnected(&close_message, allow_reconnect)
+				.disconnected(&close_message, allow_reconnect, surrender)
 				.await;
 			Ok(())
 		})
