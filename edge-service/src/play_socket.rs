@@ -357,6 +357,16 @@ impl PlaySocket {
 					.expect("failed to serialize turn start"),
 				))
 				.await;
+			if *my_turn {
+				Self::send_chat_message(
+					&mut self.socket,
+					ChatMessage {
+						id: "".to_string(),
+						message: "your turn".to_string(),
+					},
+				)
+				.await;
+			}
 		}
 	}
 	pub async fn moves_recieved(&mut self, moves: String) {
@@ -509,23 +519,18 @@ impl PlaySocket {
 	}
 	async fn process_stream_message(&mut self, message: StreamId) -> bool {
 		if let Some(game_start) = message.get::<String>("game_start") {
-			println!("game start");
 			self.game_start(game_start).await;
 		}
 		if let Some(turn_start) = message.get::<String>("turn_start") {
-			println!("turn start");
 			self.turn_start(turn_start).await;
 		}
 		if let Some(moves) = message.get::<String>("moves") {
-			println!("recieved moves");
 			self.moves_recieved(moves).await;
 		}
 		if let Some(chat) = message.get::<String>("chat") {
-			println!("got chat message");
 			self.chat_recieved(chat).await;
 		}
 		if let Some(winner) = message.get::<String>("end") {
-			println!("ending game");
 			self.game_end(winner).await;
 			false
 		} else {
