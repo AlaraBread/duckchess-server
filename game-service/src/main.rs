@@ -1,15 +1,3 @@
-use std::{
-	any::type_name,
-	collections::{HashMap, VecDeque},
-	env,
-	str::FromStr,
-	sync::{
-		Arc,
-		atomic::{AtomicBool, Ordering},
-	},
-	time::{Duration, Instant},
-};
-
 use dotenvy::dotenv;
 use duckchess_common::{Board, ChatMessage, GameStart, Player, Turn, TurnStart};
 use redis::{
@@ -22,9 +10,16 @@ use redis::{
 };
 use rocket::serde::json::serde_json;
 use std::fmt::Debug;
-use tokio::time::sleep;
-
-type DeleteGameQueue = VecDeque<(String, Instant)>;
+use std::{
+	any::type_name,
+	collections::HashMap,
+	env,
+	str::FromStr,
+	sync::{
+		Arc,
+		atomic::{AtomicBool, Ordering},
+	},
+};
 
 #[tokio::main]
 async fn main() {
@@ -55,7 +50,6 @@ async fn main() {
 		.xgroup_create_mkstream("game_requests", &consumer_group, "$")
 		.await;
 
-	let mut delete_game_queue: DeleteGameQueue = VecDeque::new();
 	loop {
 		// autoclaim unacked messages
 		let mut last_claimed_message: Option<String> = None;
@@ -75,7 +69,7 @@ async fn main() {
 				.await
 				.expect("failed to autoclaim");
 			for stream_id in autoclaim_result.claimed.iter() {
-				process_stream_id(&mut con, &mut delete_game_queue, stream_id).await;
+				process_stream_id(&mut con, stream_id).await;
 			}
 			ack_messages(&mut con, &consumer_group, autoclaim_result.claimed).await;
 			last_claimed_message = Some(autoclaim_result.next_stream_id.clone());
@@ -97,7 +91,7 @@ async fn main() {
 			.expect("Failed to read from stream");
 		for StreamKey { ids, .. } in keys.iter() {
 			for stream_id in ids.iter() {
-				process_stream_id(&mut con, &mut delete_game_queue, stream_id).await;
+				process_stream_id(&mut con, stream_id).await;
 			}
 		}
 		ack_messages(
@@ -108,21 +102,7 @@ async fn main() {
 				.collect(),
 		)
 		.await;
-		let mut i = 0;
-		while i < delete_game_queue.len() {
-			let (id, time) = &delete_game_queue[i];
-			if Instant::now() > *time {
-				cleanup_game(&mut con, id).await;
-				delete_game_queue.remove(i);
-			} else {
-				i += 1;
-			}
-		}
 		if should_exit.load(Ordering::Relaxed) {
-			while let Some((id, time)) = delete_game_queue.pop_back() {
-				sleep(Instant::now().duration_since(time)).await;
-				cleanup_game(&mut con, &id).await;
-			}
 			break;
 		}
 	}
@@ -161,32 +141,23 @@ where
 	))
 }
 
-async fn process_stream_id(
-	con: &mut MultiplexedConnection,
-	delete_game_queue: &mut DeleteGameQueue,
-	stream_id: &StreamId,
-) {
+async fn process_stream_id(con: &mut MultiplexedConnection, stream_id: &StreamId) {
 	if let Some(game_id) = stream_id.get::<String>("game_start") {
-		process_game_start(con, delete_game_queue, game_id.as_str()).await;
+		process_game_start(con, game_id.as_str()).await;
 	}
 	if let Some(turn) = stream_id.get::<String>("turn") {
-		process_turn(con, delete_game_queue, turn.as_str()).await;
+		process_turn(con, turn.as_str()).await;
 	}
 	if let Some(forfeit) = stream_id.get::<String>("forfeit") {
 		process_forfeit(
 			con,
-			delete_game_queue,
 			serde_json::from_str(&forfeit).expect("failed to parse forfeit"),
 		)
 		.await;
 	}
 }
 
-async fn process_turn(
-	con: &mut MultiplexedConnection,
-	delete_game_queue: &mut DeleteGameQueue,
-	turn: &str,
-) {
+async fn process_turn(con: &mut MultiplexedConnection, turn: &str) {
 	let turn: Turn = serde_json::from_str(turn).expect("failed to parse turn");
 	let board_key = format!("board:{}", turn.game_id);
 	let board_str: String = con.get(&board_key).await.expect("failed to get board");
@@ -220,15 +191,11 @@ async fn process_turn(
 		.await
 		.expect("Failed to write to moves stream");
 	if game_over {
-		end_game(con, delete_game_queue, &board, &board.get_turn_player_id()).await;
+		end_game(con, &board, &board.get_turn_player_id()).await;
 	}
 }
 
-async fn process_game_start(
-	con: &mut MultiplexedConnection,
-	delete_game_queue: &mut DeleteGameQueue,
-	game_start_str: &str,
-) {
+async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &str) {
 	let game_start: GameStart =
 		serde_json::from_str(game_start_str).expect("failed to parse game start");
 	let board_key = format!("board:{}", game_start.game_id);
@@ -283,15 +250,11 @@ async fn process_game_start(
 		.await
 		.expect("failed to write to user stream");
 	if board.moves.is_empty() {
-		end_game(con, delete_game_queue, &board, &board.black_player).await;
+		end_game(con, &board, &board.black_player).await;
 	}
 }
 
-async fn process_forfeit(
-	con: &mut MultiplexedConnection,
-	delete_game_queue: &mut DeleteGameQueue,
-	(game_id, player_id): (String, String),
-) {
+async fn process_forfeit(con: &mut MultiplexedConnection, (game_id, player_id): (String, String)) {
 	let board_key = format!("board:{}", game_id);
 	let board_str: String = match con.get(&board_key).await {
 		Ok(board_str) => board_str,
@@ -303,15 +266,10 @@ async fn process_forfeit(
 	} else {
 		board.white_player.clone()
 	};
-	end_game(con, delete_game_queue, &board, &winner).await;
+	end_game(con, &board, &winner).await;
 }
 
-async fn end_game(
-	con: &mut MultiplexedConnection,
-	delete_game_queue: &mut DeleteGameQueue,
-	board: &Board,
-	winner: &str,
-) {
+async fn end_game(con: &mut MultiplexedConnection, board: &Board, winner: &str) {
 	let chat_message = ChatMessage {
 		id: "".to_string(),
 		message: format!(
@@ -333,19 +291,11 @@ async fn end_game(
 		)
 		.await
 		.expect("failed to write to game stream");
-	delete_game_queue.push_front((
-		board.id.clone(),
-		Instant::now().checked_add(Duration::from_secs(5)).unwrap(),
-	));
-}
-
-async fn cleanup_game(con: &mut MultiplexedConnection, game_id: &str) {
-	let _: () = con
-		.del(&[
-			format!("board:{}", game_id),
-			format!("game:{}", game_id),
-			format!("chat:{}", game_id),
-		])
-		.await
-		.expect("failed to delete board");
+	for key in [
+		format!("board:{}", board.id),
+		format!("game:{}", board.id),
+		format!("chat:{}", board.id),
+	] {
+		let _: i32 = con.expire(key, 30).await.expect("failed to expire key");
+	}
 }
