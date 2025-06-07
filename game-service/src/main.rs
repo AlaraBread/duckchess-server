@@ -223,7 +223,7 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 	let _: () = con
 		.set(
 			format!("clock:{}", game_id),
-			serde_json::to_string(&ChessClock::new(10)).expect("failed to serialize clock"),
+			serde_json::to_string(&ChessClock::new(10 * 60)).expect("failed to serialize clock"),
 		)
 		.await
 		.expect("failed to set clock");
