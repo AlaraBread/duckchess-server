@@ -77,8 +77,8 @@ async fn play(
 					Some(Ok(message)) = socket_state.socket.next() => {
 						match message {
 							ws::Message::Text(text) => {
-								if socket_state.handle_message(&text).await {
-									close_message = "game surrendered";
+								if let Some(msg) = socket_state.handle_message(&text).await {
+									close_message = msg;
 									allow_reconnect = false;
 									surrender = true;
 									break;
@@ -96,8 +96,8 @@ async fn play(
 					Ok(message) = redis_stream => {
 						for StreamKey {ids, ..} in message.keys {
 							for message in ids {
-								if !socket_state.process_stream_id(message).await {
-									close_message = "game ended";
+								if let Some(msg) = socket_state.process_stream_id(message).await {
+									close_message = msg;
 									allow_reconnect = false;
 									surrender = false;
 									break 'main_loop;
@@ -118,6 +118,12 @@ async fn play(
 						surrender = true;
 						break;
 					}
+				}
+				if let Some(msg) = socket_state.tick().await {
+					close_message = msg;
+					allow_reconnect = false;
+					surrender = true;
+					break;
 				}
 			}
 			socket_state

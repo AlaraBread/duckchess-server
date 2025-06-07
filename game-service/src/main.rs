@@ -1,5 +1,5 @@
 use dotenvy::dotenv;
-use duckchess_common::{Board, ChatMessage, GameStart, Player, Turn, TurnStart};
+use duckchess_common::{Board, ChatMessage, ChessClock, GameStart, Player, Turn, TurnStart};
 use redis::{
 	AsyncCommands,
 	aio::MultiplexedConnection,
@@ -220,6 +220,13 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 		)
 		.await
 		.expect("failed to set board");
+	let _: () = con
+		.set(
+			format!("clock:{}", game_id),
+			serde_json::to_string(&ChessClock::new(10)).expect("failed to serialize clock"),
+		)
+		.await
+		.expect("failed to set clock");
 	let message = [
 		("game_start", game_start_str),
 		(
@@ -305,6 +312,7 @@ async fn end_game(con: &mut MultiplexedConnection, board: &Board, winner: &str) 
 		format!("board:{}", board.id),
 		format!("game:{}", board.id),
 		format!("chat:{}", board.id),
+		format!("clock:{}", board.id),
 	] {
 		let _: i32 = con.expire(key, 30).await.expect("failed to expire key");
 	}

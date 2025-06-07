@@ -10,7 +10,11 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase")]
+#[serde(
+	crate = "rocket::serde",
+	rename_all_fields = "camelCase",
+	rename_all = "camelCase"
+)]
 pub enum Player {
 	White,
 	Black,
@@ -28,7 +32,11 @@ impl Not for Player {
 }
 
 #[derive(Serialize, Clone, Debug, Deserialize)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase")]
+#[serde(
+	crate = "rocket::serde",
+	rename_all_fields = "camelCase",
+	rename_all = "camelCase"
+)]
 pub enum Floor {
 	Light,
 	Dark,

@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use duckchess_common::{
-	Board, BoardSetup, ChatMessage, GameStart, GameStartPlayer, Move, PlayRequest, PlayResponse,
-	Player, Turn, TurnStart,
+	Board, BoardSetup, ChatMessage, ChessClock, GameStart, GameStartPlayer, Move, PlayRequest,
+	PlayResponse, Player, Turn, TurnStart,
 };
 use redis::AsyncCommands;
 use redis::streams::StreamId;
@@ -30,7 +30,12 @@ pub struct PlaySocket {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(crate = "rocket::serde", rename_all = "camelCase", tag = "type")]
+#[serde(
+	crate = "rocket::serde",
+	rename_all = "camelCase",
+	rename_all_fields = "camelCase",
+	tag = "type"
+)]
 pub enum PlaySocketState {
 	WaitingForSetup {
 		last_message: Option<String>,
@@ -149,22 +154,25 @@ impl PlaySocket {
 			.expect("redis error");
 		if let PlaySocketState::Game { game_id, .. } = state {
 			if forfeit {
-				// forfeit the game (game service handles game cleanup)
-				let _: () = redis
-					.xadd_maxlen(
-						"game_requests",
-						redis::streams::StreamMaxlen::Approx(10000),
-						"*",
-						&[(
-							"forfeit",
-							&serde_json::to_string(&(&game_id, user_id))
-								.expect("failed to serialize forfeit"),
-						)],
-					)
-					.await
-					.expect("redis error");
+				Self::forfeit(redis, &game_id, user_id).await;
 			}
 		}
+	}
+	async fn forfeit(redis: &mut Connection<RedisPool>, game_id: &str, user_id: &str) {
+		// game service handles game cleanup
+		let _: () = redis
+			.xadd_maxlen(
+				"game_requests",
+				redis::streams::StreamMaxlen::Approx(10000),
+				"*",
+				&[(
+					"forfeit",
+					&serde_json::to_string(&(&game_id, user_id))
+						.expect("failed to serialize forfeit"),
+				)],
+			)
+			.await
+			.expect("redis error");
 	}
 	async fn set_disconnect_snowflake(user_id: &str, redis: &mut Connection<RedisPool>) -> String {
 		let disconnect_snowflake = Uuid::new_v7(Timestamp::now(NoContext)).to_string();
@@ -335,10 +343,32 @@ impl PlaySocket {
 		let turn_start: TurnStart =
 			serde_json::from_str(&turn_start).expect("failed to parse turn start");
 		if let PlaySocketState::Game {
-			my_turn, player, ..
+			my_turn,
+			player,
+			game_id,
+			..
 		} = &mut self.state
 		{
 			*my_turn = turn_start.turn == *player;
+			let mut clock: ChessClock = serde_json::from_str(
+				&self
+					.redis
+					.get::<String, String>(format!("clock:{}", game_id))
+					.await
+					.expect("clock doesnt exist"),
+			)
+			.expect("failed to deserialize chess clock");
+			clock.player_timer(turn_start.turn).start();
+			if *my_turn {
+				let _: () = self
+					.redis
+					.set(
+						format!("clock:{}", game_id),
+						serde_json::to_string(&clock).expect("failed to serialize chess clock"),
+					)
+					.await
+					.expect("failed to set chess clock");
+			}
 			let _ = self
 				.socket
 				.send(ws::Message::Text(
@@ -346,6 +376,7 @@ impl PlaySocket {
 						turn: turn_start.turn,
 						move_pieces: turn_start.move_pieces,
 						moves: turn_start.moves,
+						clock,
 					})
 					.expect("failed to serialize turn start"),
 				))
@@ -399,10 +430,10 @@ impl PlaySocket {
 			.await;
 	}
 	// handle message from user
-	pub async fn handle_message(&mut self, message: &str) -> bool {
+	pub async fn handle_message(&mut self, message: &str) -> Option<&'static str> {
 		let message: PlayRequest = match serde_json::from_str(message) {
 			Ok(message) => message,
-			Err(_) => return false,
+			Err(_) => return None,
 		};
 		match message {
 			PlayRequest::Turn {
@@ -410,13 +441,35 @@ impl PlaySocket {
 				move_idx,
 			} => {
 				if let PlaySocketState::Game {
-					game_id, my_turn, ..
+					game_id,
+					my_turn,
+					player,
+					..
 				} = &mut self.state
 				{
 					if !*my_turn {
-						return false;
+						return None;
 					}
 					*my_turn = false;
+					let mut clock: ChessClock = serde_json::from_str(
+						&self
+							.redis
+							.get::<String, String>(format!("clock:{}", game_id))
+							.await
+							.expect("clock doesnt exist"),
+					)
+					.expect("failed to deserialize chess clock");
+					if !clock.player_timer(*player).pause() {
+						return Some("you ran out of time");
+					}
+					let _: () = self
+						.redis
+						.set(
+							format!("clock:{}", game_id),
+							serde_json::to_string(&clock).expect("failed to serialize chess clock"),
+						)
+						.await
+						.expect("failed to set chess clock");
 					let _: () = self
 						.redis
 						.xadd_maxlen(
@@ -440,7 +493,7 @@ impl PlaySocket {
 			}
 			PlayRequest::ChatMessage { message } => {
 				if message.len() > 1024 {
-					return false;
+					return None;
 				}
 				if let PlaySocketState::Game { game_id, .. } = &self.state {
 					let chat_message = ChatMessage {
@@ -477,7 +530,7 @@ impl PlaySocket {
 			PlayRequest::BoardSetup { setup } => {
 				if let PlaySocketState::WaitingForSetup { .. } = self.state {
 					if !setup.is_valid() {
-						return false;
+						return Some("invalid board setup");
 					}
 					let elo: f32 = sqlx::query("SELECT elo FROM users WHERE id = $1")
 						.bind(&self.user_id)
@@ -497,13 +550,13 @@ impl PlaySocket {
 			}
 			PlayRequest::Surrender => {
 				if let PlaySocketState::Game { .. } = &self.state {
-					return true;
+					return Some("game surrendered");
 				}
 			}
 		}
-		false
+		None
 	}
-	pub async fn process_stream_id(&mut self, message: StreamId) -> bool {
+	pub async fn process_stream_id(&mut self, message: StreamId) -> Option<&'static str> {
 		match &mut self.state {
 			PlaySocketState::Matchmaking { last_message, .. }
 			| PlaySocketState::WaitingForSetup { last_message } => {
@@ -516,7 +569,7 @@ impl PlaySocket {
 			}
 		}
 	}
-	async fn process_stream_message(&mut self, message: StreamId) -> bool {
+	async fn process_stream_message(&mut self, message: StreamId) -> Option<&'static str> {
 		if let Some(game_start) = message.get::<String>("game_start") {
 			self.game_start(game_start).await;
 		}
@@ -531,10 +584,14 @@ impl PlaySocket {
 		}
 		if let Some(winner) = message.get::<String>("end") {
 			self.game_end(winner).await;
-			false
+			Some("game ended")
 		} else {
-			true
+			None
 		}
+	}
+	async fn reset_state(&mut self) {
+		self.state = PlaySocketState::WaitingForSetup { last_message: None };
+		self.save_state().await;
 	}
 	pub async fn send_game_state(&mut self) {
 		if let PlaySocketState::Game { game_id, .. } = &mut self.state {
@@ -547,17 +604,31 @@ impl PlaySocket {
 					Ok(v) => v,
 					Err(_) => {
 						// game doesnt exist
-						self.state = PlaySocketState::WaitingForSetup { last_message: None };
-						self.save_state().await;
+						self.reset_state().await;
 						return;
 					}
 				},
 			)
 			.expect("failed to deserialize board");
+			let clock: ChessClock = serde_json::from_str(
+				match &self
+					.redis
+					.get::<String, String>(format!("clock:{}", game_id))
+					.await
+				{
+					Ok(v) => v,
+					Err(_) => {
+						// game doesnt exist
+						self.reset_state().await;
+						return;
+					}
+				},
+			)
+			.expect("failed to deserialize chess clock");
 			let _ = self
 				.socket
 				.send(ws::Message::Text(
-					serde_json::to_string(&PlayResponse::GameState { board })
+					serde_json::to_string(&PlayResponse::GameState { board, clock })
 						.expect("failed to serialize game state"),
 				))
 				.await;
@@ -579,5 +650,33 @@ impl PlaySocket {
 				))
 				.await;
 		}
+	}
+	pub async fn tick(&mut self) -> Option<&'static str> {
+		if let PlaySocketState::Game {
+			game_id,
+			my_turn,
+			player,
+			..
+		} = &self.state
+		{
+			if *my_turn {
+				let mut clock: ChessClock = serde_json::from_str(
+					match self
+						.redis
+						.get::<String, String>(format!("clock:{}", game_id))
+						.await
+					{
+						Ok(v) => v,
+						Err(_) => return None,
+					}
+					.as_str(),
+				)
+				.expect("failed to deserialize clock");
+				if !clock.player_timer(*player).has_time() {
+					return Some("you ran out of time");
+				}
+			}
+		}
+		return None;
 	}
 }

@@ -1,6 +1,5 @@
+use crate::{Board, BoardSetup, ChessClock, Move, Player, Vec2};
 use rocket::serde::{Deserialize, Serialize};
-
-use crate::{Board, BoardSetup, Move, Player, Vec2};
 
 #[derive(Deserialize, Debug)]
 #[serde(
@@ -28,11 +27,13 @@ pub enum PlayResponse {
 	InvalidRequest,
 	GameState {
 		board: Board,
+		clock: ChessClock,
 	},
 	TurnStart {
 		turn: Player,
 		move_pieces: Vec<Vec2>,
 		moves: Vec<Vec<Move>>,
+		clock: ChessClock,
 	},
 	Move {
 		moves: Vec<Move>,
