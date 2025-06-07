@@ -1,11 +1,11 @@
 use std::time::Duration;
 
 use duckchess_common::{
-	Board, BoardSetup, ChatMessage, ChessClock, GameStart, GameStartPlayer, Move, PlayRequest,
-	PlayResponse, Player, Turn, TurnStart,
+	Board, BoardSetup, ChatMessage, ChessClock, GAME_LENGTH, GameStart, GameStartPlayer, Move,
+	PlayRequest, PlayResponse, Player, Turn, TurnStart,
 };
-use redis::AsyncCommands;
 use redis::streams::StreamId;
+use redis::{AsyncCommands, SetExpiry, SetOptions};
 
 use rocket::serde::json::serde_json;
 use rocket::time::OffsetDateTime;
@@ -362,9 +362,11 @@ impl PlaySocket {
 			if *my_turn {
 				let _: () = self
 					.redis
-					.set(
+					.set_options(
 						format!("clock:{}", game_id),
 						serde_json::to_string(&clock).expect("failed to serialize chess clock"),
+						SetOptions::default()
+							.with_expiration(SetExpiry::EX(GAME_LENGTH as usize + 30)),
 					)
 					.await
 					.expect("failed to set chess clock");
@@ -524,6 +526,11 @@ impl PlaySocket {
 						.ltrim(&chat_key, -100, -1)
 						.await
 						.expect("redis error");
+					let _: i32 = self
+						.redis
+						.expire(&chat_key, GAME_LENGTH as i64 + 30)
+						.await
+						.expect("failed to expire key");
 				}
 			}
 			PlayRequest::ExpandEloRange => self.expand_elo_range().await,

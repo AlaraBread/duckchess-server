@@ -22,11 +22,12 @@ pub enum Timer {
 	Paused { time_remaining: u64 },
 }
 
+pub const GAME_LENGTH: u64 = 2 * 10 * 60;
 impl ChessClock {
-	pub fn new(time_seconds: u64) -> ChessClock {
+	pub fn new() -> ChessClock {
 		ChessClock {
-			white: Timer::new(time_seconds),
-			black: Timer::new(time_seconds),
+			white: Timer::new(GAME_LENGTH / 2),
+			black: Timer::new(GAME_LENGTH / 2),
 		}
 	}
 	pub fn player_timer(&mut self, player: Player) -> &mut Timer {

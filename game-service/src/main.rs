@@ -1,7 +1,9 @@
 use dotenvy::dotenv;
-use duckchess_common::{Board, ChatMessage, ChessClock, GameStart, Player, Turn, TurnStart};
+use duckchess_common::{
+	Board, ChatMessage, ChessClock, GAME_LENGTH, GameStart, Player, Turn, TurnStart,
+};
 use redis::{
-	AsyncCommands,
+	AsyncCommands, SetExpiry, SetOptions,
 	aio::MultiplexedConnection,
 	streams::{
 		StreamAutoClaimOptions, StreamAutoClaimReply, StreamId, StreamKey, StreamReadOptions,
@@ -177,7 +179,11 @@ async fn process_turn(con: &mut MultiplexedConnection, turn: &str) {
 		None => return,
 	};
 	let _: () = con
-		.set(&board_key, serde_json::to_string(&board).unwrap())
+		.set_options(
+			&board_key,
+			serde_json::to_string(&board).unwrap(),
+			SetOptions::default().with_expiration(SetExpiry::EX(GAME_LENGTH + 30)),
+		)
 		.await
 		.expect("failed to set board");
 	let _: String = con
@@ -213,17 +219,20 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 	let white_id = game_start.white.id.clone();
 	let black_id = game_start.black.id.clone();
 	let board = Board::new(game_start);
+	let expire_time = GAME_LENGTH + 30;
 	let _: () = con
-		.set(
+		.set_options(
 			&board_key,
 			serde_json::to_string(&board).expect("failed to serialize board"),
+			SetOptions::default().with_expiration(SetExpiry::EX(expire_time)),
 		)
 		.await
 		.expect("failed to set board");
 	let _: () = con
-		.set(
+		.set_options(
 			format!("clock:{}", game_id),
-			serde_json::to_string(&ChessClock::new(10 * 60)).expect("failed to serialize clock"),
+			serde_json::to_string(&ChessClock::new()).expect("failed to serialize clock"),
+			SetOptions::default().with_expiration(SetExpiry::EX(expire_time)),
 		)
 		.await
 		.expect("failed to set clock");
@@ -248,6 +257,10 @@ async fn process_game_start(con: &mut MultiplexedConnection, game_start_str: &st
 		)
 		.await
 		.expect("failed to write to game stream");
+	let _: i32 = con
+		.expire(format!("game:{}", board.id), expire_time as i64)
+		.await
+		.expect("failed to expire key");
 	let _: String = con
 		.xadd_maxlen(
 			format!("user:{}", &black_id),
