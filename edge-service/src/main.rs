@@ -154,7 +154,7 @@ async fn login(cookies: &CookieJar<'_>, mut db: Connection<PostgresPool>) -> Jso
 			.http_only(true)
 			.permanent()
 			.same_site(SameSite::Lax)
-			.secure(false) // TODO: set this to true for release
+			.secure(true)
 			.build(),
 	);
 	Json(id)
@@ -176,7 +176,7 @@ struct PostgresPool(sqlx::PgPool);
 
 #[rocket::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-	let allowed_origins = AllowedOrigins::some_exact(&["http://localhost:3000"]);
+	let allowed_origins = AllowedOrigins::some_exact(&["https://duckchess.alarabread.fun"]);
 	let cors = rocket_cors::CorsOptions {
 		allowed_origins,
 		allowed_methods: vec![Method::Get].into_iter().map(From::from).collect(),
