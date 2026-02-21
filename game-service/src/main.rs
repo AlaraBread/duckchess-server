@@ -40,8 +40,7 @@ async fn main() {
 	})
 	.expect("Error setting Ctrl-C handler");
 
-	let client =
-		redis::Client::open(format!("redis://{}", redis_url)).expect("failed to open redis client");
+	let client = redis::Client::open(redis_url).expect("failed to open redis client");
 	let mut con = client
 		.get_multiplexed_async_connection()
 		.await
