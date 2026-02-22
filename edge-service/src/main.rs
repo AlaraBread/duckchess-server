@@ -1,16 +1,19 @@
+mod config;
 mod play_socket;
 mod util;
 
+use crate::config::CustomConfig;
 use crate::util::close_socket;
 use play_socket::{PlaySocket, PlaySocketState};
 use redis::streams::{StreamKey, StreamReadOptions, StreamReadReply};
 use redis::{AsyncCommands, RedisFuture};
+use rocket::fairing::AdHoc;
 use rocket::futures::StreamExt;
 use rocket::http::Method;
 use rocket::http::{Cookie, CookieJar, SameSite};
 use rocket::serde::json::Json;
-use rocket::tokio;
 use rocket::{Responder, Shutdown, get, routes};
+use rocket::{State, tokio};
 use rocket_cors::{AllowedHeaders, AllowedOrigins};
 use rocket_db_pools::{
 	Connection, Database,
@@ -135,7 +138,11 @@ async fn play(
 }
 
 #[get("/login")]
-async fn login(cookies: &CookieJar<'_>, mut db: Connection<PostgresPool>) -> Json<String> {
+async fn login(
+	cookies: &CookieJar<'_>,
+	mut db: Connection<PostgresPool>,
+	config: &State<CustomConfig>,
+) -> Json<String> {
 	let id;
 	let id = match cookies.get_private("user_id") {
 		Some(id) => id.value().to_string(),
@@ -153,7 +160,7 @@ async fn login(cookies: &CookieJar<'_>, mut db: Connection<PostgresPool>) -> Jso
 		Cookie::build(("user_id", id.clone()))
 			.http_only(true)
 			.permanent()
-			.same_site(SameSite::Lax)
+			.same_site(SameSite::from(&config.cookies_same_site))
 			.secure(true)
 			.build(),
 	);
@@ -176,7 +183,15 @@ struct PostgresPool(sqlx::PgPool);
 
 #[rocket::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-	let allowed_origins = AllowedOrigins::some_exact(&["https://duckchess.alarabread.fun"]);
+	let partial_rocket = rocket::build()
+		.mount("/", routes![play, login])
+		.attach(AdHoc::config::<CustomConfig>());
+	let custom_config = partial_rocket.figment().extract::<CustomConfig>().unwrap();
+	let allowed_origins = if custom_config.cors_allow_all_origins {
+		AllowedOrigins::all()
+	} else {
+		AllowedOrigins::some_exact(&custom_config.cors_allowed_origins)
+	};
 	let cors = rocket_cors::CorsOptions {
 		allowed_origins,
 		allowed_methods: vec![Method::Get].into_iter().map(From::from).collect(),
@@ -185,8 +200,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 		..Default::default()
 	}
 	.to_cors()?;
-	Ok(rocket::build()
-		.mount("/", routes![play, login])
+	Ok(partial_rocket
 		.attach(cors)
 		.attach(RedisPool::init())
 		.attach(PostgresPool::init())

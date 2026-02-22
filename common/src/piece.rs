@@ -22,6 +22,7 @@ pub enum PieceType {
 		// used for en passant
 		turns_since_double_advance: Option<i32>,
 	},
+	Duck,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -74,6 +75,26 @@ impl Piece {
 			return vec![];
 		}
 		let moves = match self.piece_type {
+			PieceType::Duck => {
+				let mut moves = Vec::new();
+				for y in 0..board.board.len() {
+					for x in 0..board.board[y].len() {
+						let tile = Vec2(x as i8, y as i8);
+						if tile == pos {
+							continue;
+						}
+						if board.get_tile(tile).piece.is_some() {
+							continue;
+						}
+						moves.push(Move {
+							move_type: MoveType::JumpingMove,
+							from: pos,
+							to: tile,
+						});
+					}
+				}
+				moves
+			}
 			PieceType::King => {
 				let mut moves = self.generate_simple_moves(
 					&[
@@ -308,6 +329,7 @@ pub enum SetupPieceType {
 	Bishop,
 	Knight,
 	Pawn,
+	Duck,
 }
 
 impl From<SetupPieceType> for PieceType {
@@ -321,6 +343,7 @@ impl From<SetupPieceType> for PieceType {
 			SetupPieceType::Pawn => PieceType::Pawn {
 				turns_since_double_advance: None,
 			},
+			SetupPieceType::Duck => PieceType::Duck,
 		}
 	}
 }
@@ -334,6 +357,7 @@ impl SetupPieceType {
 			SetupPieceType::Bishop => 300,
 			SetupPieceType::Knight => 300,
 			SetupPieceType::Pawn => 100,
+			SetupPieceType::Duck => 300,
 		}
 	}
 }

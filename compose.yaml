@@ -48,6 +48,8 @@ services:
       SERVE_PORT: 8000
       BIND_ADDRESS: 0.0.0.0
       LOG_LEVEL: normal
+      CORS_ALLOW_ALL_ORIGINS: true
+      COOKIES_SAME_SITE: None
     secrets:
       - secret_key
       - postgres_password
